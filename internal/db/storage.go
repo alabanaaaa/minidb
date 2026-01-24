@@ -3,6 +3,7 @@ package minidatabase
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 )
 
@@ -11,7 +12,7 @@ type Storage struct {
 }
 
 func OpenStorage(path string) (*Storage, error) {
-	file, err := os.Open(
+	file, err := os.OpenFile(
 		path,
 		os.O_CREATE|os.O_RDWR,
 		0644,
@@ -23,13 +24,13 @@ func OpenStorage(path string) (*Storage, error) {
 }
 
 func (s *Storage) Append(key, value []byte) (int64, error) {
-	//move to end of file
-	offset, err := s.file.Seek(0, os.SEEK_END)
+	// move to end of file
+	offset, err := s.file.Seek(0, 2) // os.SEEK_END = 2
 	if err != nil {
 		return 0, err
 	}
 
-	//write key size
+	// write key size
 	if err := binary.Write(s.file, binary.LittleEndian, uint32(len(key))); err != nil {
 		return 0, err
 	}
@@ -39,20 +40,24 @@ func (s *Storage) Append(key, value []byte) (int64, error) {
 		return 0, err
 	}
 
-	// Write key and value
+	// write key and value
 	if _, err := s.file.Write(key); err != nil {
 		return 0, err
 	}
+	if _, err := s.file.Write(value); err != nil {
+		return 0, err
+	}
 
-	// Ensure data is flushed to disk
+	// flush to disk
 	if err := s.file.Sync(); err != nil {
 		return 0, err
 	}
+
 	return offset, nil
 }
 
 func (s *Storage) Read(offset int64) ([]byte, error) {
-	if _, err := s.file.Seek(offset, os.SEEK_SET); err != nil {
+	if _, err := s.file.Seek(offset, 0); err != nil {
 		return nil, err
 	}
 
@@ -83,6 +88,33 @@ func (s *Storage) Read(offset int64) ([]byte, error) {
 		return nil, errors.New("incomplete read")
 	}
 	return value, nil
+}
+
+func (s *Storage) ReadAt(offset int64) ([]byte, error) {
+	if _, err := s.file.Seek(offset, 0); err != nil {
+		return nil, err
+	}
+
+	// Read header first (keySize + valueSize)
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(s.file, header); err != nil {
+		return nil, err
+	}
+
+	keySize := binary.LittleEndian.Uint32(header[:4])
+	valueSize := binary.LittleEndian.Uint32(header[4:])
+
+	totalBytes := 8 + int(keySize) + int(valueSize)
+
+	data := make([]byte, totalBytes)
+	copy(data[:8], header)
+
+	if _, err := io.ReadFull(s.file, data[8:]); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+
 }
 
 func (s *Storage) Close() error {

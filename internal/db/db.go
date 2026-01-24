@@ -1,9 +1,11 @@
 package minidatabase
 
 import (
+	"bytes"
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"io"
+	"mini-database/internal/record"
 )
 
 type DB struct {
@@ -32,6 +34,7 @@ func OpenDB(path string) (*DB, error) {
 	return db, nil
 }
 
+/*
 func (db *DB) Put(key string, value []byte) error {
 	offset, err := db.storage.Append([]byte(key), value)
 	if err != nil {
@@ -40,8 +43,18 @@ func (db *DB) Put(key string, value []byte) error {
 
 	db.index[key] = offset
 	return nil
+}*/
+// put API to insert key-value pairs into the database
+func (db *DB) Put(key, value string) error {
+	offset, err := db.storage.Append([]byte(key), []byte(value))
+	if err != nil {
+		return err
+	}
+	db.index[key] = offset
+	return nil
 }
 
+/*
 func (db *DB) Get(key string) ([]byte, error) {
 	offset, ok := db.index[key]
 	if !ok {
@@ -52,10 +65,35 @@ func (db *DB) Get(key string) ([]byte, error) {
 		return nil, err
 	}
 	return value, nil
-}
+}*/
 
-func (db *DB) Close() error {
-	return db.storage.Close()
+//get API to retrieve value by key from the database
+
+func (db *DB) Get(key string) (string, error) {
+	offset, ok := db.index[key]
+	if !ok {
+		return "", errors.New("key not found")
+	}
+
+	data, err := db.storage.ReadAt(offset)
+	if err != nil {
+		return "", err
+	}
+
+	rec, _, err := record.Decode(bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+
+	if rec.Tombstone {
+		return "", errors.New("key deleted")
+	}
+
+	if string(rec.Key) != key {
+		return "", errors.New("key mismatch")
+	}
+
+	return string(rec.Value), nil
 }
 
 // Replay function to rebuild the in-memory index from the storage file
@@ -94,7 +132,7 @@ func (db *DB) readNextRecord(offset int64) ([]byte, []byte, int, error) {
 	var keySize uint32
 	var valueSize uint32
 
-	if err := binary.Read(file, binary.LittleEndian, &keySize); err != nil {
+	if err := binary.Read(db.storage.file, binary.LittleEndian, &keySize); err != nil {
 		return nil, nil, 0, err
 	}
 
@@ -117,4 +155,8 @@ func (db *DB) readNextRecord(offset int64) ([]byte, []byte, int, error) {
 	totalBytes := 4 + 4 + n1 + n2 // keySize(4 bytes) + valueSize(4 bytes) + key + value
 	return key, value, totalBytes, nil
 
+}
+
+func (db *DB) Close() error {
+	return db.storage.Close()
 }
