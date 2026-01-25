@@ -1,11 +1,9 @@
 package minidatabase
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
-	"mini-database/internal/record"
 )
 
 type DB struct {
@@ -75,25 +73,12 @@ func (db *DB) Get(key string) (string, error) {
 		return "", errors.New("key not found")
 	}
 
-	data, err := db.storage.ReadAt(offset)
+	value, err := db.storage.Read(offset)
 	if err != nil {
 		return "", err
 	}
 
-	rec, _, err := record.Decode(bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-
-	if rec.Tombstone {
-		return "", errors.New("key deleted")
-	}
-
-	if string(rec.Key) != key {
-		return "", errors.New("key mismatch")
-	}
-
-	return string(rec.Value), nil
+	return string(value), nil
 }
 
 // Replay function to rebuild the in-memory index from the storage file
@@ -108,7 +93,7 @@ func (db *DB) Replay() error {
 		key, _, n, err := db.readNextRecord(offset)
 		if err != nil {
 			//EOF is expected at the end of file
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				break
 			}
 			return err
@@ -141,20 +126,17 @@ func (db *DB) readNextRecord(offset int64) ([]byte, []byte, int, error) {
 	}
 
 	key := make([]byte, keySize)
-	n1, err := db.storage.file.Read(key)
-	if err != nil {
+	if _, err := io.ReadFull(db.storage.file, key); err != nil {
 		return nil, nil, 0, err
 	}
 
 	value := make([]byte, valueSize)
-	n2, err := db.storage.file.Read(value)
-	if err != nil {
+	if _, err := io.ReadFull(db.storage.file, value); err != nil {
 		return nil, nil, 0, err
 	}
 
-	totalBytes := 4 + 4 + n1 + n2 // keySize(4 bytes) + valueSize(4 bytes) + key + value
+	totalBytes := 8 + int(keySize) + int(valueSize)
 	return key, value, totalBytes, nil
-
 }
 
 func (db *DB) Close() error {
