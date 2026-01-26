@@ -102,11 +102,8 @@ func (db *DB) Replay() error {
 
 	for {
 		rec, n, err := db.storage.ReadAt(offset)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
+		if err == io.EOF {
+			return nil
 		}
 
 		key := string(rec.Key)

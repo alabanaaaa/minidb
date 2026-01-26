@@ -1,8 +1,6 @@
 package minidatabase
 
 import (
-	"encoding/binary"
-	"errors"
 	"io"
 	"mini-database/internal/record"
 	"os"
@@ -31,27 +29,14 @@ func (s *Storage) Append(key, value []byte, tombstone bool) (int64, error) {
 		return 0, err
 	}
 
-	if err := binary.Write(s.file, binary.LittleEndian, uint32(len(key))); err != nil {
-		return 0, err
-	}
+	_, err = record.Encode(
+		s.file,
+		key,
+		value,
+		tombstone,
+	)
 
-	if err := binary.Write(s.file, binary.LittleEndian, uint32(len(value))); err != nil {
-		return 0, err
-
-	}
-	var tomb byte = 0
-	if tombstone {
-		tomb = 1
-	}
-	if _, err := s.file.Write([]byte{tomb}); err != nil {
-		return 0, err
-	}
-
-	if _, err := s.file.Write(key); err != nil {
-		return 0, err
-	}
-
-	if _, err := s.file.Write(value); err != nil {
+	if err != nil {
 		return 0, err
 	}
 
@@ -60,41 +45,6 @@ func (s *Storage) Append(key, value []byte, tombstone bool) (int64, error) {
 	}
 
 	return offset, nil
-
-}
-
-func (s *Storage) Read(offset int64) ([]byte, error) {
-	if _, err := s.file.Seek(offset, 0); err != nil {
-		return nil, err
-	}
-
-	var keySize uint32
-	var valueSize uint32
-
-	if err := binary.Read(s.file, binary.LittleEndian, &keySize); err != nil {
-		return nil, err
-	}
-
-	if err := binary.Read(s.file, binary.LittleEndian, &valueSize); err != nil {
-		return nil, err
-	}
-
-	//skip key
-
-	if _, err := s.file.Seek(int64(keySize), os.SEEK_CUR); err != nil {
-		return nil, err
-	}
-
-	value := make([]byte, valueSize)
-	n, err := s.file.Read(value)
-	if err != nil {
-		return nil, err
-	}
-
-	if uint32(n) != valueSize {
-		return nil, errors.New("incomplete read")
-	}
-	return value, nil
 }
 
 func (s *Storage) ReadAt(offset int64) (*record.Record, int64, error) {

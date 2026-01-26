@@ -20,7 +20,12 @@ func Encode(w io.Writer, key, value []byte, tombstone bool) (int64, error) {
 	}
 	written += 4
 
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(value))); err != nil {
+	valueSize := uint32(0)
+	if !tombstone {
+		valueSize = uint32(len(value))
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, valueSize); err != nil {
 		return written, err
 	}
 	written += 4
@@ -40,11 +45,13 @@ func Encode(w io.Writer, key, value []byte, tombstone bool) (int64, error) {
 	}
 	written += int64(n)
 
-	n, err = w.Write(value)
-	if err != nil {
-		return written, err
+	if !tombstone {
+		n, err = w.Write(value)
+		if err != nil {
+			return written, err
+		}
+		written += int64(n)
 	}
-	written += int64(n)
 
 	return written, nil
 }
@@ -72,9 +79,12 @@ func Decode(r io.Reader) (*Record, int64, error) {
 		return nil, 0, err
 	}
 
-	value := make([]byte, valueSize)
-	if _, err := io.ReadFull(r, value); err != nil {
-		return nil, 0, err
+	var value []byte
+	if tomb[0] == 0 {
+		value = make([]byte, valueSize)
+		if _, err := io.ReadFull(r, value); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	total := int64(4 + 4 + 1 + keySize + valueSize)
