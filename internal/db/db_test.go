@@ -101,6 +101,35 @@ func TestDeleteRecovery(t *testing.T) {
 
 	_, err := db2.Get("a")
 	if err == nil {
-		t.Fatal("expected deleted key after restart")
+		t.Fatal("expected deleted key after restart", err)
+	}
+}
+
+func TestCompaction(t *testing.T) {
+	path := "test_compact.db"
+	os.Remove(path)
+
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db.Put("a", "1")
+	db.Put("b", "2")
+	db.Put("a", "3")
+	db.Delete("b")
+
+	if err := db.Compact(); err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := db.Get("a")
+	if err != nil || val != "3" {
+		t.Fatalf("expected a=3 got %v", val)
+	}
+
+	_, err = db.Get("b")
+	if err == nil {
+		t.Fatal("expected error for deleted key.")
 	}
 }

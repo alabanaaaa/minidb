@@ -1,9 +1,7 @@
 package record
 
 import (
-	"bytes"
 	"encoding/binary"
-
 	"io"
 )
 
@@ -13,57 +11,59 @@ type Record struct {
 	Tombstone bool
 }
 
-func Encode(r *Record) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	// key size
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(r.Key))); err != nil {
-		return nil, err
-	}
-	// value size
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(r.Value))); err != nil {
-		return nil, err
-	}
+// Encode writes a record to a writer
+func Encode(w io.Writer, key, value []byte, tombstone bool) (int64, error) {
+	var written int64
 
-	//tombstone
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(key))); err != nil {
+		return written, err
+	}
+	written += 4
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(value))); err != nil {
+		return written, err
+	}
+	written += 4
+
 	var tomb byte = 0
-	if r.Tombstone {
+	if tombstone {
 		tomb = 1
 	}
-
-	if err := buf.WriteByte(tomb); err != nil {
-		return nil, err
+	if _, err := w.Write([]byte{tomb}); err != nil {
+		return written, err
 	}
+	written++
 
-	//key bytes
-	if _, err := buf.Write(r.Key); err != nil {
-		return nil, err
+	n, err := w.Write(key)
+	if err != nil {
+		return written, err
 	}
+	written += int64(n)
 
-	//value bytes
-	if _, err := buf.Write(r.Value); err != nil {
-		return nil, err
+	n, err = w.Write(value)
+	if err != nil {
+		return written, err
 	}
+	written += int64(n)
 
-	return buf.Bytes(), nil
+	return written, nil
 }
 
+// Decode reads a record from a reader
 func Decode(r io.Reader) (*Record, int64, error) {
 	var keySize uint32
 	var valueSize uint32
 
-	// read key size
 	if err := binary.Read(r, binary.LittleEndian, &keySize); err != nil {
 		return nil, 0, err
 	}
 
-	//read value size
 	if err := binary.Read(r, binary.LittleEndian, &valueSize); err != nil {
 		return nil, 0, err
 	}
 
-	//read tombstone
 	tomb := make([]byte, 1)
-	if _, err := r.Read(tomb); err != nil {
+	if _, err := io.ReadFull(r, tomb); err != nil {
 		return nil, 0, err
 	}
 
@@ -77,14 +77,11 @@ func Decode(r io.Reader) (*Record, int64, error) {
 		return nil, 0, err
 	}
 
-	record := &Record{
+	total := int64(4 + 4 + 1 + keySize + valueSize)
+
+	return &Record{
 		Key:       key,
 		Value:     value,
 		Tombstone: tomb[0] == 1,
-	}
-
-	//total bytes read
-	totalBytes := int64(4 + 4 + 1 + keySize + valueSize)
-
-	return record, totalBytes, nil
+	}, total, nil
 }

@@ -1,11 +1,10 @@
 package minidatabase
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"io"
-	"mini-database/internal/record"
+
+	"os"
 )
 
 type DB struct {
@@ -81,12 +80,7 @@ func (db *DB) Get(key string) (string, error) {
 		return "", errors.New("key not found")
 	}
 
-	data, err := db.storage.ReadAt(offset)
-	if err != nil {
-		return "", err
-	}
-
-	rec, _, err := record.Decode(bytes.NewReader(data))
+	rec, _, err := db.storage.ReadAt(offset)
 	if err != nil {
 		return "", err
 	}
@@ -107,7 +101,7 @@ func (db *DB) Replay() error {
 	var offset int64 = 0
 
 	for {
-		data, err := db.storage.ReadAt(offset)
+		rec, n, err := db.storage.ReadAt(offset)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -115,22 +109,19 @@ func (db *DB) Replay() error {
 			return err
 		}
 
-		rec, n, err := record.Decode(bytes.NewReader(data))
-		if err != nil {
-			return err
-		}
+		key := string(rec.Key)
 
 		if rec.Tombstone {
-			delete(db.index, string(rec.Key))
+			delete(db.index, key)
 		} else {
-			db.index[string(rec.Key)] = offset
+			db.index[key] = offset
 		}
 		offset += n
 	}
 }
 
 // readNextRecord reads the next record from the storage file at the given offset
-func (db *DB) readNextRecord(offset int64) ([]byte, int, error) {
+/*func (db *DB) readNextRecord(offset int64) ([]byte, int, error) {
 	if _, err := db.storage.file.Seek(offset, io.SeekStart); err != nil {
 		return nil, 0, err
 
@@ -165,7 +156,7 @@ func (db *DB) readNextRecord(offset int64) ([]byte, int, error) {
 
 	totalBytes := 4 + 4 + 1 + int(keySize) + int(valueSize)
 	return key, totalBytes, nil
-}
+} */
 
 func (db *DB) Delete(key string) error {
 	_, err := db.storage.Append(
@@ -181,6 +172,56 @@ func (db *DB) Delete(key string) error {
 	return nil
 }
 
+func (db *DB) Compact() error {
+	tmpPath := db.storage.path + ".compact"
+
+	newStorage, err := OpenStorage(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	defer newStorage.Close()
+
+	newIndex := make(map[string]int64)
+
+	for key, offset := range db.index {
+		rec, _, err := db.storage.ReadAt(offset)
+		if err != nil {
+			return err
+		}
+
+		if rec.Tombstone {
+			continue
+		}
+
+		newOffset, err := newStorage.Append(
+			rec.Key,
+			rec.Value,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+
+		newIndex[key] = newOffset
+	}
+
+	db.storage.Close()
+
+	if err := os.Rename(tmpPath, db.storage.path); err != nil {
+		return err
+	}
+
+	storage, err := OpenStorage(db.storage.path)
+	if err != nil {
+		return err
+	}
+
+	db.storage = storage
+	db.index = newIndex
+
+	return nil
+}
 func (db *DB) Close() error {
 	return db.storage.Close()
 }

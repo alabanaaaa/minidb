@@ -4,11 +4,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"mini-database/internal/record"
 	"os"
 )
 
 type Storage struct {
 	file *os.File
+	path string
 }
 
 func OpenStorage(path string) (*Storage, error) {
@@ -20,7 +22,7 @@ func OpenStorage(path string) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Storage{file: file}, nil
+	return &Storage{file: file, path: path}, nil
 }
 
 func (s *Storage) Append(key, value []byte, tombstone bool) (int64, error) {
@@ -95,12 +97,14 @@ func (s *Storage) Read(offset int64) ([]byte, error) {
 	return value, nil
 }
 
-func (s *Storage) ReadAt(offset int64) ([]byte, error) {
-	if _, err := s.file.Seek(offset, 0); err != nil {
-		return nil, err
+func (s *Storage) ReadAt(offset int64) (*record.Record, int64, error) {
+	if _, err := s.file.Seek(offset, io.SeekStart); err != nil {
+		return nil, 0, err
 	}
+	return record.Decode(s.file)
+}
 
-	// Read header first (keySize + valueSize + tombstone)
+/*	// Read header first (keySize + valueSize + tombstone)
 	header := make([]byte, 9) // 4 + 4 + 1
 	if _, err := io.ReadFull(s.file, header); err != nil {
 		return nil, err
@@ -119,8 +123,7 @@ func (s *Storage) ReadAt(offset int64) ([]byte, error) {
 	}
 
 	return data, nil
-
-}
+*/
 
 func (s *Storage) Close() error {
 	return s.file.Close()
