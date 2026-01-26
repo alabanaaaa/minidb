@@ -1,9 +1,11 @@
 package minidatabase
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
+	"mini-database/internal/record"
 )
 
 type DB struct {
@@ -44,10 +46,16 @@ func (db *DB) Put(key string, value []byte) error {
 }*/
 // put API to insert key-value pairs into the database
 func (db *DB) Put(key, value string) error {
-	offset, err := db.storage.Append([]byte(key), []byte(value))
+	offset, err := db.storage.Append(
+		[]byte(key),
+		[]byte(value),
+		false,
+	)
+
 	if err != nil {
 		return err
 	}
+
 	db.index[key] = offset
 	return nil
 }
@@ -73,70 +81,104 @@ func (db *DB) Get(key string) (string, error) {
 		return "", errors.New("key not found")
 	}
 
-	value, err := db.storage.Read(offset)
+	data, err := db.storage.ReadAt(offset)
 	if err != nil {
 		return "", err
 	}
 
-	return string(value), nil
+	rec, _, err := record.Decode(bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+
+	if rec.Tombstone {
+		return "", errors.New("key deleted")
+	}
+
+	if string(rec.Key) != key {
+		return "", errors.New("key mismatch")
+	}
+
+	return string(rec.Value), nil
 }
 
 // Replay function to rebuild the in-memory index from the storage file
 func (db *DB) Replay() error {
 	var offset int64 = 0
 
-	if _, err := db.storage.file.Seek(0, 0); err != nil {
-		return err
-	}
-
 	for {
-		key, _, n, err := db.readNextRecord(offset)
+		data, err := db.storage.ReadAt(offset)
 		if err != nil {
-			//EOF is expected at the end of file
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break
+			if err == io.EOF {
+				return nil
 			}
 			return err
 		}
-		// update in-memory index to latest offset
-		db.index[string(key)] = offset
 
-		// move offset to the next record
-		offset += int64(n)
+		rec, n, err := record.Decode(bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
+
+		if rec.Tombstone {
+			delete(db.index, string(rec.Key))
+		} else {
+			db.index[string(rec.Key)] = offset
+		}
+		offset += n
 	}
-
-	return nil
 }
 
 // readNextRecord reads the next record from the storage file at the given offset
-func (db *DB) readNextRecord(offset int64) ([]byte, []byte, int, error) {
-	if _, err := db.storage.file.Seek(offset, 0); err != nil {
-		return nil, nil, 0, err
+func (db *DB) readNextRecord(offset int64) ([]byte, int, error) {
+	if _, err := db.storage.file.Seek(offset, io.SeekStart); err != nil {
+		return nil, 0, err
+
 	}
 
 	var keySize uint32
 	var valueSize uint32
 
 	if err := binary.Read(db.storage.file, binary.LittleEndian, &keySize); err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 
 	if err := binary.Read(db.storage.file, binary.LittleEndian, &valueSize); err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
+	}
+
+	// tombstone byte
+	var tomb byte
+	if _, err := io.ReadFull(db.storage.file, []byte{tomb}); err != nil {
+		return nil, 0, err
 	}
 
 	key := make([]byte, keySize)
 	if _, err := io.ReadFull(db.storage.file, key); err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 
 	value := make([]byte, valueSize)
 	if _, err := io.ReadFull(db.storage.file, value); err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 
-	totalBytes := 8 + int(keySize) + int(valueSize)
-	return key, value, totalBytes, nil
+	totalBytes := 4 + 4 + 1 + int(keySize) + int(valueSize)
+	return key, totalBytes, nil
+}
+
+func (db *DB) Delete(key string) error {
+	_, err := db.storage.Append(
+		[]byte(key),
+		nil,
+		true, // tombstone flag set to true
+	)
+	if err != nil {
+		return err
+	}
+
+	delete(db.index, key)
+	return nil
 }
 
 func (db *DB) Close() error {

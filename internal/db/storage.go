@@ -23,37 +23,42 @@ func OpenStorage(path string) (*Storage, error) {
 	return &Storage{file: file}, nil
 }
 
-func (s *Storage) Append(key, value []byte) (int64, error) {
-	// move to end of file
-	offset, err := s.file.Seek(0, 2) // os.SEEK_END = 2
+func (s *Storage) Append(key, value []byte, tombstone bool) (int64, error) {
+	offset, err := s.file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, err
 	}
 
-	// write key size
 	if err := binary.Write(s.file, binary.LittleEndian, uint32(len(key))); err != nil {
 		return 0, err
 	}
 
-	// write value size
 	if err := binary.Write(s.file, binary.LittleEndian, uint32(len(value))); err != nil {
+		return 0, err
+
+	}
+	var tomb byte = 0
+	if tombstone {
+		tomb = 1
+	}
+	if _, err := s.file.Write([]byte{tomb}); err != nil {
 		return 0, err
 	}
 
-	// write key and value
 	if _, err := s.file.Write(key); err != nil {
 		return 0, err
 	}
+
 	if _, err := s.file.Write(value); err != nil {
 		return 0, err
 	}
 
-	// flush to disk
 	if err := s.file.Sync(); err != nil {
 		return 0, err
 	}
 
 	return offset, nil
+
 }
 
 func (s *Storage) Read(offset int64) ([]byte, error) {
@@ -95,21 +100,21 @@ func (s *Storage) ReadAt(offset int64) ([]byte, error) {
 		return nil, err
 	}
 
-	// Read header first (keySize + valueSize)
-	header := make([]byte, 8)
+	// Read header first (keySize + valueSize + tombstone)
+	header := make([]byte, 9) // 4 + 4 + 1
 	if _, err := io.ReadFull(s.file, header); err != nil {
 		return nil, err
 	}
 
 	keySize := binary.LittleEndian.Uint32(header[:4])
-	valueSize := binary.LittleEndian.Uint32(header[4:])
+	valueSize := binary.LittleEndian.Uint32(header[4:8])
 
-	totalBytes := 8 + int(keySize) + int(valueSize)
+	totalBytes := 9 + int(keySize) + int(valueSize)
 
 	data := make([]byte, totalBytes)
-	copy(data[:8], header)
+	copy(data[:9], header)
 
-	if _, err := io.ReadFull(s.file, data[8:]); err != nil {
+	if _, err := io.ReadFull(s.file, data[9:]); err != nil {
 		return nil, err
 	}
 

@@ -69,3 +69,38 @@ func TestRecoveryAfterRestart(t *testing.T) {
 		t.Fatalf("Expected %q, got %q after recovery", "Go", val)
 	}
 }
+
+func TestDelete(t *testing.T) {
+	path := "test_delete.db"
+	_ = os.Remove(path)
+	defer os.Remove(path)
+
+	db, _ := OpenDB(path)
+	defer db.Close()
+
+	_ = db.Put("a", "1")
+	_ = db.Delete("a")
+
+	_, err := db.Get("a")
+	if err == nil {
+		t.Fatal("expected error for deleted key")
+	}
+}
+
+func TestDeleteRecovery(t *testing.T) {
+	path := "test_delete_recovery.db"
+	_ = os.Remove(path)
+	defer os.Remove(path)
+
+	db, _ := OpenDB(path)
+	_ = db.Put("a", "1")
+	_ = db.Delete("a")
+	db.Close()
+
+	db2, _ := OpenDB(path)
+
+	_, err := db2.Get("a")
+	if err == nil {
+		t.Fatal("expected deleted key after restart")
+	}
+}
