@@ -3,17 +3,17 @@ package minidatabase
 import (
 	"errors"
 	"io"
-
 	"os"
+	"sync"
 )
 
 type DB struct {
 	storage *Storage
 	index   map[string]int64
+	mu      sync.RWMutex // protects index and storage
 }
 
-//OpenDB opens the storage engine and creates an empty index
-
+// OpenDB opens the storage engine and creates an empty index
 func OpenDB(path string) (*DB, error) {
 	storage, err := OpenStorage(path)
 	if err != nil {
@@ -31,26 +31,15 @@ func OpenDB(path string) (*DB, error) {
 	}
 
 	return db, nil
+
 }
 
-/*
-func (db *DB) Put(key string, value []byte) error {
-	offset, err := db.storage.Append([]byte(key), value)
-	if err != nil {
-		return err
-	}
-
-	db.index[key] = offset
-	return nil
-}*/
-// put API to insert key-value pairs into the database
+// Put inserts or updates a key-value pair
 func (db *DB) Put(key, value string) error {
-	offset, err := db.storage.Append(
-		[]byte(key),
-		[]byte(value),
-		false,
-	)
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
+	offset, err := db.storage.Append([]byte(key), []byte(value), false)
 	if err != nil {
 		return err
 	}
@@ -59,22 +48,11 @@ func (db *DB) Put(key, value string) error {
 	return nil
 }
 
-/*
-func (db *DB) Get(key string) ([]byte, error) {
-	offset, ok := db.index[key]
-	if !ok {
-		return nil, fmt.Errorf("key %q not found", key)
-	}
-	value, err := db.storage.Read(offset)
-	if err != nil {
-		return nil, err
-	}
-	return value, nil
-}*/
-
-//get API to retrieve value by key from the database
-
+// Get retrieves the value for a given key
 func (db *DB) Get(key string) (string, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	offset, ok := db.index[key]
 	if !ok {
 		return "", errors.New("key not found")
@@ -96,18 +74,37 @@ func (db *DB) Get(key string) (string, error) {
 	return string(rec.Value), nil
 }
 
-// Replay function to rebuild the in-memory index from the storage file
+// Delete marks a key as deleted
+func (db *DB) Delete(key string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	_, err := db.storage.Append([]byte(key), nil, true)
+	if err != nil {
+		return err
+	}
+
+	delete(db.index, key)
+	return nil
+}
+
+// Replay rebuilds the in-memory index from the storage file
 func (db *DB) Replay() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	var offset int64 = 0
 
 	for {
 		rec, n, err := db.storage.ReadAt(offset)
-		if err == io.EOF {
-			return nil
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return nil
+			}
+			return err
 		}
 
 		key := string(rec.Key)
-
 		if rec.Tombstone {
 			delete(db.index, key)
 		} else {
@@ -117,61 +114,12 @@ func (db *DB) Replay() error {
 	}
 }
 
-// readNextRecord reads the next record from the storage file at the given offset
-/*func (db *DB) readNextRecord(offset int64) ([]byte, int, error) {
-	if _, err := db.storage.file.Seek(offset, io.SeekStart); err != nil {
-		return nil, 0, err
-
-	}
-
-	var keySize uint32
-	var valueSize uint32
-
-	if err := binary.Read(db.storage.file, binary.LittleEndian, &keySize); err != nil {
-		return nil, 0, err
-	}
-
-	if err := binary.Read(db.storage.file, binary.LittleEndian, &valueSize); err != nil {
-		return nil, 0, err
-	}
-
-	// tombstone byte
-	var tomb byte
-	if _, err := io.ReadFull(db.storage.file, []byte{tomb}); err != nil {
-		return nil, 0, err
-	}
-
-	key := make([]byte, keySize)
-	if _, err := io.ReadFull(db.storage.file, key); err != nil {
-		return nil, 0, err
-	}
-
-	value := make([]byte, valueSize)
-	if _, err := io.ReadFull(db.storage.file, value); err != nil {
-		return nil, 0, err
-	}
-
-	totalBytes := 4 + 4 + 1 + int(keySize) + int(valueSize)
-	return key, totalBytes, nil
-} */
-
-func (db *DB) Delete(key string) error {
-	_, err := db.storage.Append(
-		[]byte(key),
-		nil,
-		true, // tombstone flag set to true
-	)
-	if err != nil {
-		return err
-	}
-
-	delete(db.index, key)
-	return nil
-}
-
+// Compact rewrites the db file to remove deleted record
 func (db *DB) Compact() error {
-	tmpPath := db.storage.path + ".compact"
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
+	tmpPath := db.storage.path + ".compact"
 	newStorage, err := OpenStorage(tmpPath)
 	if err != nil {
 		return err
@@ -191,11 +139,7 @@ func (db *DB) Compact() error {
 			continue
 		}
 
-		newOffset, err := newStorage.Append(
-			rec.Key,
-			rec.Value,
-			false,
-		)
+		newOffset, err := newStorage.Append(rec.Key, rec.Value, false)
 		if err != nil {
 			return err
 		}
@@ -219,6 +163,11 @@ func (db *DB) Compact() error {
 
 	return nil
 }
+
+// Close safely closes the storage file
 func (db *DB) Close() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	return db.storage.Close()
 }
