@@ -16,7 +16,7 @@ type DB struct {
 	mu        sync.RWMutex // protects index and storage
 }
 
-// OpenDB opens the storage engine and creates an empty index
+// OpenDB opens the storage engine and builds the in-memory index
 func OpenDB(path string) (*DB, error) {
 	storage, err := OpenStorage(path)
 	if err != nil {
@@ -28,21 +28,20 @@ func OpenDB(path string) (*DB, error) {
 		index:   make(map[string]int64),
 	}
 
-	// open snapshot manager (stored alongside db file)
-	mgr, err := snapshotpkg.Open(storage.path + ".snap")
+	// Open snapshot manager
+	mgr, err := snapshotpkg.OpenSnapshotManager(storage.path + ".snap")
 	if err != nil {
 		db.storage.Close()
 		return nil, err
 	}
 	db.snapshots = mgr
 
-	// Replay existing data to build the in-memory index
+	// Replay data to build in-memory index
 	if err := db.Replay(); err != nil {
 		return nil, err
 	}
 
 	return db, nil
-
 }
 
 // Put inserts or updates a key-value pair
@@ -59,7 +58,7 @@ func (db *DB) Put(key, value string) error {
 	return nil
 }
 
-// Get retrieves the value for a given key
+// Get retrieves a value for a key
 func (db *DB) Get(key string) (string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -74,6 +73,10 @@ func (db *DB) Get(key string) (string, error) {
 		return "", err
 	}
 
+	if rec.Tombstone {
+		return "", errors.New("key deleted")
+	}
+
 	return string(rec.Value), nil
 }
 
@@ -82,13 +85,7 @@ func (db *DB) Delete(key string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	// Append tombstone record
-	_, err := db.storage.Append(
-		[]byte(key),
-		nil,
-		true,
-	)
-
+	_, err := db.storage.Append([]byte(key), nil, true)
 	if err != nil {
 		return err
 	}
@@ -103,7 +100,6 @@ func (db *DB) Replay() error {
 	defer db.mu.Unlock()
 
 	var offset int64 = 0
-
 	for {
 		rec, n, err := db.storage.ReadAt(offset)
 		if err != nil {
@@ -113,20 +109,17 @@ func (db *DB) Replay() error {
 			return err
 		}
 
-		// Skip deleted records (tombstones)
-		if !rec.Tombstone {
-			key := string(rec.Key)
-			db.index[key] = offset
-		} else {
-			// Remove the key from index if it exists and is marked as deleted
-			key := string(rec.Key)
+		key := string(rec.Key)
+		if rec.Tombstone {
 			delete(db.index, key)
+		} else {
+			db.index[key] = offset
 		}
 		offset += n
 	}
 }
 
-// Compact rewrites the db file to remove deleted record
+// Compact rewrites the DB file to remove deleted records
 func (db *DB) Compact() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -136,11 +129,9 @@ func (db *DB) Compact() error {
 	if err != nil {
 		return err
 	}
-
 	defer newStorage.Close()
 
 	newIndex := make(map[string]int64)
-
 	for key, offset := range db.index {
 		rec, _, err := db.storage.ReadAt(offset)
 		if err != nil {
@@ -155,12 +146,10 @@ func (db *DB) Compact() error {
 		if err != nil {
 			return err
 		}
-
 		newIndex[key] = newOffset
 	}
 
 	db.storage.Close()
-
 	if err := os.Rename(tmpPath, db.storage.path); err != nil {
 		return err
 	}
@@ -172,10 +161,10 @@ func (db *DB) Compact() error {
 
 	db.storage = storage
 	db.index = newIndex
-
 	return nil
 }
 
+// CreateSnapshot creates a snapshot of the current DB state
 func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -189,11 +178,13 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	// ensure snapshot Offset reflects the current file size
+
+	// also expose current file offset for callers
 	snap.Offset = size
 	return &snap, nil
 }
 
+// ReadAtSnapshot reads a key as it existed at a given snapshot
 func (db *DB) ReadAtSnapshot(key string, snapshotOffset int64) (string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -208,13 +199,8 @@ func (db *DB) ReadAtSnapshot(key string, snapshotOffset int64) (string, error) {
 			return "", err
 		}
 
-		if offset+n > snapshotOffset {
-			break
-		}
-
 		if string(rec.Key) == key {
 			if rec.Tombstone {
-				// mark as deleted at this point in history
 				found = false
 				lastVal = ""
 			} else {
@@ -232,6 +218,7 @@ func (db *DB) ReadAtSnapshot(key string, snapshotOffset int64) (string, error) {
 	return "", errors.New("key not found at snapshot")
 }
 
+// Close safely closes the DB and snapshot manager
 func (db *DB) Close() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
