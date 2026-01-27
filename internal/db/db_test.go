@@ -1,14 +1,15 @@
 package minidatabase
 
 import (
-	"os"
+	"path/filepath"
 	"testing"
 )
 
-func NewTestDB(t *testing.T, path string) *DB {
+func NewTestDB(t *testing.T, name string) *DB {
 	t.Helper()
 
-	_ = os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
 
 	db, err := OpenDB(path)
 	if err != nil {
@@ -16,19 +17,15 @@ func NewTestDB(t *testing.T, path string) *DB {
 	}
 
 	t.Cleanup(func() {
-		db.Close()
-		_ = os.Remove(path)
+		_ = db.Close()
 	})
 
 	return db
 }
 
 func TestPutAndGet(t *testing.T) {
-	path := "test.db"
-
-	// Clean up before and after
-	_ = os.Remove(path)
-	defer os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
 
 	db, err := OpenDB(path)
 	if err != nil {
@@ -53,11 +50,8 @@ func TestPutAndGet(t *testing.T) {
 }
 
 func TestRecoveryAfterRestart(t *testing.T) {
-	path := "test_recovery.db"
-
-	// Clean up before and after
-	_ = os.Remove(path)
-	defer os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test_recovery.db")
 
 	// First instance
 	db, err := OpenDB(path)
@@ -89,9 +83,8 @@ func TestRecoveryAfterRestart(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	path := "test_delete.db"
-	_ = os.Remove(path)
-	defer os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test_delete.db")
 
 	db, _ := OpenDB(path)
 	defer db.Close()
@@ -106,9 +99,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDeleteRecovery(t *testing.T) {
-	path := "test_delete_recovery.db"
-	_ = os.Remove(path)
-	defer os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test_delete_recovery.db")
 
 	db, _ := OpenDB(path)
 	_ = db.Put("a", "1")
@@ -124,8 +116,8 @@ func TestDeleteRecovery(t *testing.T) {
 }
 
 func TestCompaction(t *testing.T) {
-	path := "test_compact.db"
-	os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test_compact.db")
 
 	db, err := OpenDB(path)
 	if err != nil {
@@ -206,9 +198,8 @@ func TestDeleteNonExistentKey(t *testing.T) {
 }
 
 func TestMixedKeysRecovery(t *testing.T) {
-	path := "mixed.db"
-	_ = os.Remove(path)
-	defer os.Remove(path)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.db")
 
 	db, _ := OpenDB(path)
 	db.Put("a", "1")
@@ -285,5 +276,28 @@ func TestCompactionPreservesDeletes(t *testing.T) {
 	_, err := db.Get("a")
 	if err == nil {
 		t.Fatalf("expected deleted key after compaction")
+	}
+}
+
+func TestReadAtSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test_snapshot.db")
+	db, _ := OpenDB(path)
+	defer db.Close()
+	db.Put("a", "1")
+	snap1, _ := db.CreateSnapshot()
+
+	db.Put("a", "2")
+	snap2, _ := db.CreateSnapshot()
+
+	v1, _ := db.ReadAtSnapshot("a", snap1.Offset)
+	v2, _ := db.ReadAtSnapshot("a", snap2.Offset)
+
+	if v1 != "1" {
+		t.Fatalf("expected 1, got %s", v1)
+	}
+
+	if v2 != "2" {
+		t.Fatalf("expected 2, got %s", v2)
 	}
 }

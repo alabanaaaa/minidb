@@ -5,12 +5,15 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	snapshotpkg "mini-database/internal/snapshot"
 )
 
 type DB struct {
-	storage *Storage
-	index   map[string]int64
-	mu      sync.RWMutex // protects index and storage
+	storage   *Storage
+	index     map[string]int64
+	snapshots *snapshotpkg.Manager
+	mu        sync.RWMutex // protects index and storage
 }
 
 // OpenDB opens the storage engine and creates an empty index
@@ -24,6 +27,14 @@ func OpenDB(path string) (*DB, error) {
 		storage: storage,
 		index:   make(map[string]int64),
 	}
+
+	// open snapshot manager (stored alongside db file)
+	mgr, err := snapshotpkg.Open(storage.path + ".snap")
+	if err != nil {
+		db.storage.Close()
+		return nil, err
+	}
+	db.snapshots = mgr
 
 	// Replay existing data to build the in-memory index
 	if err := db.Replay(); err != nil {
@@ -72,7 +83,12 @@ func (db *DB) Delete(key string) error {
 	defer db.mu.Unlock()
 
 	// Append tombstone record
-	_, err := db.storage.Append([]byte(key), nil, true)
+	_, err := db.storage.Append(
+		[]byte(key),
+		nil,
+		true,
+	)
+
 	if err != nil {
 		return err
 	}
@@ -115,7 +131,7 @@ func (db *DB) Compact() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	tmpPath := db.storage.path + ".compact"
+	tmpPath := db.storage.path + ".compact.tmp"
 	newStorage, err := OpenStorage(tmpPath)
 	if err != nil {
 		return err
@@ -160,10 +176,68 @@ func (db *DB) Compact() error {
 	return nil
 }
 
-// Close safely closes the storage file
+func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	size, err := db.storage.Size()
+	if err != nil {
+		return nil, err
+	}
+
+	snap, err := db.snapshots.Create(size)
+	if err != nil {
+		return nil, err
+	}
+	// ensure snapshot Offset reflects the current file size
+	snap.Offset = size
+	return &snap, nil
+}
+
+func (db *DB) ReadAtSnapshot(key string, snapshotOffset int64) (string, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var offset int64 = 0
+	var lastVal string
+	var found bool
+
+	for offset < snapshotOffset {
+		rec, n, err := db.storage.ReadAt(offset)
+		if err != nil {
+			return "", err
+		}
+
+		if offset+n > snapshotOffset {
+			break
+		}
+
+		if string(rec.Key) == key {
+			if rec.Tombstone {
+				// mark as deleted at this point in history
+				found = false
+				lastVal = ""
+			} else {
+				found = true
+				lastVal = string(rec.Value)
+			}
+		}
+
+		offset += n
+	}
+
+	if found {
+		return lastVal, nil
+	}
+	return "", errors.New("key not found at snapshot")
+}
+
 func (db *DB) Close() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	if db.snapshots != nil {
+		_ = db.snapshots.Close()
+	}
 	return db.storage.Close()
 }

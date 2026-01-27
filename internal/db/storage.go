@@ -75,6 +75,15 @@ func (s *Storage) ReadAt(offset int64) (*record.Record, int64, error) {
 	return data, nil
 */
 
+func (s *Storage) Size() (int64, error) {
+	info, err := s.file.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	return info.Size(), nil
+}
+
 func (s *Storage) Close() error {
 	return s.file.Close()
 }

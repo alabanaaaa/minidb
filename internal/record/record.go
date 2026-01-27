@@ -68,8 +68,10 @@ func Decode(r io.Reader) (*Record, int64, error) {
 		return nil, 0, err
 	}
 
+	// For tombstones, valueSize is 0 and should not have value data
+	// For regular records, read the value data
 	var value []byte
-	if tomb[0] == 0 {
+	if valueSize > 0 {
 		value = make([]byte, valueSize)
 		if _, err := io.ReadFull(r, value); err != nil {
 			return nil, 0, err
