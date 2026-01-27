@@ -63,14 +63,6 @@ func (db *DB) Get(key string) (string, error) {
 		return "", err
 	}
 
-	if rec.Tombstone {
-		return "", errors.New("key deleted")
-	}
-
-	if string(rec.Key) != key {
-		return "", errors.New("key mismatch")
-	}
-
 	return string(rec.Value), nil
 }
 
@@ -79,6 +71,7 @@ func (db *DB) Delete(key string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	// Append tombstone record
 	_, err := db.storage.Append([]byte(key), nil, true)
 	if err != nil {
 		return err
@@ -104,11 +97,14 @@ func (db *DB) Replay() error {
 			return err
 		}
 
-		key := string(rec.Key)
-		if rec.Tombstone {
-			delete(db.index, key)
-		} else {
+		// Skip deleted records (tombstones)
+		if !rec.Tombstone {
+			key := string(rec.Key)
 			db.index[key] = offset
+		} else {
+			// Remove the key from index if it exists and is marked as deleted
+			key := string(rec.Key)
+			delete(db.index, key)
 		}
 		offset += n
 	}

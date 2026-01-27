@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func NewTestDB(t *testing.T, path string) *DB {
+	t.Helper()
+
+	_ = os.Remove(path)
+
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Close()
+		_ = os.Remove(path)
+	})
+
+	return db
+}
+
 func TestPutAndGet(t *testing.T) {
 	path := "test.db"
 
@@ -131,5 +149,141 @@ func TestCompaction(t *testing.T) {
 	_, err = db.Get("b")
 	if err == nil {
 		t.Fatal("expected error for deleted key.")
+	}
+}
+
+func TestOverWriteValue(t *testing.T) {
+	db := NewTestDB(t, "overwrite.db")
+
+	if err := db.Put("a", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Put("a", "2"); err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := db.Get("a")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+
+	if val != "2" {
+		t.Fatalf("Expected %q, got %q", "2", val)
+	}
+}
+
+func TestDeleteThenPut(t *testing.T) {
+	db := NewTestDB(t, "delete_put.db")
+
+	db.Put("x", "old")
+	db.Delete("x")
+	db.Put("x", "new")
+
+	val, err := db.Get("x")
+
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+
+	if val != "new" {
+		t.Fatalf("expected %q, got %q", "new", val)
+	}
+}
+
+func TestDeleteNonExistentKey(t *testing.T) {
+	db := NewTestDB(t, "delete_missing.db")
+
+	if err := db.Delete("ghost"); err != nil {
+		t.Fatalf("delete failed: %v", err)
+
+	}
+
+	_, err := db.Get("ghost")
+	if err == nil {
+		t.Fatalf("expected error for deleted key")
+	}
+}
+
+func TestMixedKeysRecovery(t *testing.T) {
+	path := "mixed.db"
+	_ = os.Remove(path)
+	defer os.Remove(path)
+
+	db, _ := OpenDB(path)
+	db.Put("a", "1")
+	db.Put("b", "2")
+	db.Put("c", "3")
+	db.Delete("b")
+	db.Close()
+
+	db2, _ := OpenDB(path)
+	defer db2.Close()
+
+	val, _ := db2.Get("a")
+	if val != "1" {
+		t.Fatalf("expected 1, got %s", val)
+	}
+
+	_, err := db2.Get("b")
+	if err == nil {
+		t.Fatalf("expected b to be deleted")
+
+	}
+
+	val, _ = db2.Get("c")
+	if val != "3" {
+		t.Fatalf("expected 3, got %s", val)
+	}
+}
+
+func TestEmptyValue(t *testing.T) {
+	db := NewTestDB(t, "empty.db")
+
+	db.Put("empty", "")
+
+	val, err := db.Get("empty")
+	if err != nil {
+		t.Fatalf("get failed %v", err)
+	}
+
+	if val != "" {
+		t.Fatalf("expected empty string, got %q", val)
+	}
+}
+
+func TestLargeValue(t *testing.T) {
+	db := NewTestDB(t, "large.db")
+
+	large := make([]byte, 1024*1024) // 1MB
+	for i := range large {
+		large[i] = 'a'
+	}
+
+	db.Put("big", string(large))
+
+	val, err := db.Get("big")
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+
+	if len(val) != len(large) {
+		t.Fatalf("size mismatch")
+	}
+}
+
+func TestCompactionPreservesDeletes(t *testing.T) {
+	db := NewTestDB(t, "compact_delete.db")
+
+	db.Put("a", "1")
+	db.Delete("a")
+
+	if err := db.Compact(); err != nil {
+		t.Fatalf("compaction failed: %v", err)
+	}
+
+	_, err := db.Get("a")
+	if err == nil {
+		t.Fatalf("expected deleted key after compaction")
 	}
 }

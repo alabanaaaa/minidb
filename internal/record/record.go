@@ -1,7 +1,10 @@
 package record
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
+	"hash/crc32"
 	"io"
 )
 
@@ -9,51 +12,37 @@ type Record struct {
 	Key       []byte
 	Value     []byte
 	Tombstone bool
+	Checksum  uint32
 }
 
 // Encode writes a record to a writer
 func Encode(w io.Writer, key, value []byte, tombstone bool) (int64, error) {
-	var written int64
 
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(key))); err != nil {
-		return written, err
-	}
-	written += 4
+	buf := new(bytes.Buffer)
 
-	valueSize := uint32(0)
-	if !tombstone {
-		valueSize = uint32(len(value))
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(key))); err != nil {
+		return 0, err
 	}
-
-	if err := binary.Write(w, binary.LittleEndian, valueSize); err != nil {
-		return written, err
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(value))); err != nil {
+		return 0, err
 	}
-	written += 4
 
 	var tomb byte = 0
 	if tombstone {
 		tomb = 1
 	}
-	if _, err := w.Write([]byte{tomb}); err != nil {
-		return written, err
-	}
-	written++
 
-	n, err := w.Write(key)
-	if err != nil {
-		return written, err
-	}
-	written += int64(n)
+	buf.WriteByte(tomb)
+	buf.Write(key)
+	buf.Write(value)
 
-	if !tombstone {
-		n, err = w.Write(value)
-		if err != nil {
-			return written, err
-		}
-		written += int64(n)
+	checksum := crc32.Checksum(buf.Bytes(), crc32.MakeTable(crc32.Castagnoli))
+	if err := binary.Write(buf, binary.LittleEndian, checksum); err != nil {
+		return 0, err
 	}
 
-	return written, nil
+	n, err := w.Write(buf.Bytes())
+	return int64(n), err
 }
 
 // Decode reads a record from a reader
@@ -87,7 +76,25 @@ func Decode(r io.Reader) (*Record, int64, error) {
 		}
 	}
 
-	total := int64(4 + 4 + 1 + keySize + valueSize)
+	var storedChecksum uint32
+	if err := binary.Read(r, binary.LittleEndian, &storedChecksum); err != nil {
+		return nil, 0, err
+	}
+
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, keySize)
+	binary.Write(buf, binary.LittleEndian, valueSize)
+	buf.Write(tomb)
+	buf.Write(key)
+	buf.Write(value)
+
+	computed := crc32.Checksum(buf.Bytes(), crc32.MakeTable(crc32.Castagnoli))
+	if computed != storedChecksum {
+		return nil, 0, errors.New("checksum mismatch(corrupted record)")
+	}
+
+	// total bytes read: keySize(4) + valueSize(4) + tombstone(1) + key + value + checksum(4)
+	total := int64(4 + 4 + 1 + keySize + valueSize + 4)
 
 	return &Record{
 		Key:       key,
