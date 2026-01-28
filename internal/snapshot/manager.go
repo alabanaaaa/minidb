@@ -14,6 +14,7 @@ type DBSnapshot struct {
 	ID        uint64
 	CreatedAt time.Time
 	MaxOffset int64
+	index     map[string]int64
 }
 
 // Manager handles all snapshots for a DB
@@ -87,7 +88,7 @@ func (m *Manager) load() error {
 }
 
 // Create creates a new snapshot at the given maxOffset
-func (m *Manager) Create(maxOffset int64) (Snapshot, error) {
+func (m *Manager) Create(maxOffset int64, index map[string]int64) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

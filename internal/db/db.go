@@ -174,7 +174,12 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 		return nil, err
 	}
 
-	snap, err := db.snapshots.Create(size)
+	indexCopy := make(map[string]int64, len(db.index))
+	for k, v := range db.index {
+		indexCopy[k] = v
+	}
+
+	snap, err := db.snapshots.Create(size, indexCopy)
 	if err != nil {
 		return nil, err
 	}
