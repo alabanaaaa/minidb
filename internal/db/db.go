@@ -185,42 +185,31 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 	}
 
 	// also expose current file offset for callers
-	snap.Offset = size
+
 	return &snap, nil
 }
 
 // ReadAtSnapshot reads a key as it existed at a given snapshot
-func (db *DB) ReadAtSnapshot(key string, snapshotOffset int64) (string, error) {
+func (db *DB) ReadAtSnapshot(key string, snap *snapshotpkg.Snapshot) (string, error) {
 	db.mu.RLock()
-	defer db.mu.RUnlock()
+	defer db.mu.Unlock()
 
-	var offset int64 = 0
-	var lastVal string
-	var found bool
-
-	for offset < snapshotOffset {
-		rec, n, err := db.storage.ReadAt(offset)
-		if err != nil {
-			return "", err
-		}
-
-		if string(rec.Key) == key {
-			if rec.Tombstone {
-				found = false
-				lastVal = ""
-			} else {
-				found = true
-				lastVal = string(rec.Value)
-			}
-		}
-
-		offset += n
+	offset, ok := snap.Index[key]
+	if !ok {
+		return "", errors.New("key not found at snapshot")
 	}
 
-	if found {
-		return lastVal, nil
+	rec, _, err := db.storage.ReadAt(offset)
+	if err != nil {
+		return "", err
 	}
-	return "", errors.New("key not found at snapshot")
+
+	if rec.Tombstone {
+		return "", errors.New("Key deleted at snapshot")
+
+	}
+
+	return string(rec.Value), nil
 }
 
 // Close safely closes the DB and snapshot manager

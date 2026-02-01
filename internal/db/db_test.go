@@ -285,13 +285,13 @@ func TestReadAtSnapshot(t *testing.T) {
 	db, _ := OpenDB(path)
 	defer db.Close()
 	db.Put("a", "1")
-	snap1, _ := db.CreateSnapshot()
+	snap, _ := db.CreateSnapshot()
 
 	db.Put("a", "2")
 	snap2, _ := db.CreateSnapshot()
 
-	v1, _ := db.ReadAtSnapshot("a", snap1.Offset)
-	v2, _ := db.ReadAtSnapshot("a", snap2.Offset)
+	v1, _ := db.ReadAtSnapshot("a", snap)
+	v2, _ := db.ReadAtSnapshot("a", snap2)
 
 	if v1 != "1" {
 		t.Fatalf("expected 1, got %s", v1)

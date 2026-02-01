@@ -92,6 +92,11 @@ func (m *Manager) Create(maxOffset int64, index map[string]int64) (Snapshot, err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	indexCopy := make(map[string]int64, len(index))
+	for k, v := range index {
+		indexCopy[k] = v
+	}
+
 	snap := Snapshot{
 		ID:        m.nextID,
 		CreatedAt: time.Now(),
