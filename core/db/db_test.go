@@ -2,6 +2,7 @@ package minidatabase
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -299,5 +300,130 @@ func TestReadAtSnapshot(t *testing.T) {
 
 	if v2 != "2" {
 		t.Fatalf("expected 2, got %s", v2)
+	}
+}
+
+func TestSnapshotIsolationFromDeletes(t *testing.T) {
+	db := NewTestDB(t, "snapshot_isolation.db")
+
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+
+	db.Delete("a")
+
+	val, err := db.ReadAtSnapshot("a", snap)
+	if err != nil {
+		t.Fatalf("snapshot read failed: %v", err)
+	}
+
+	if val != "1" {
+		t.Fatalf("expected 1, got %s", val)
+	}
+
+	_, err = db.Get("a")
+	if err == nil {
+		t.Fatalf("expected key to be deleted in live db")
+	}
+}
+
+func TestSnapshotRecoveryAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snapshot_restart.db")
+
+	db, _ := OpenDB(path)
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+	db.Put("a", "2")
+	db.Close()
+
+	db2, _ := OpenDB(path)
+	defer db2.Close()
+
+	val, err := db2.ReadAtSnapshot("a", snap)
+	if err != nil {
+		t.Fatalf("snapshot read after restart failed: %v", err)
+
+	}
+
+	if val != "1" {
+		t.Fatalf("expected 1, got %s", val)
+	}
+}
+
+func TestSnapshotIndexImmutability(t *testing.T) {
+	db := NewTestDB(t, "snapshot_immutable.db")
+
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+
+	db.Put("a", "2")
+	db.Put("b", "3")
+
+	val, _ := db.ReadAtSnapshot("a", snap)
+	if val != "1" {
+		t.Fatalf("expected snapshot to be immutable")
+	}
+
+	_, err := db.ReadAtSnapshot("b", snap)
+	if err == nil {
+		t.Fatalf("snapshot should not see future keys")
+	}
+}
+
+func TestSnapshotDeleteThenReinsert(t *testing.T) {
+	db := NewTestDB(t, "snapshot_reinsert.db")
+
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+
+	db.Delete("a")
+	db.Put("a", "2")
+
+	val, err := db.ReadAtSnapshot("a", snap)
+	if err != nil {
+		t.Fatalf("snapshot read failed")
+	}
+	if val != "1" {
+		t.Fatalf("expected 1, got %s", val)
+	}
+
+	val2, _ := db.Get("a")
+	if val2 != "2" {
+		t.Fatalf("expected live value 2")
+	}
+}
+
+func TestConcurrentSnapshotReads(t *testing.T) {
+	db := NewTestDB(t, "concurrent_snapshot.db")
+
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = db.ReadAtSnapshot("a", snap)
+		}()
+	}
+	wg.Wait()
+}
+
+func TestCompactionDoesNotAffectSnapshots(t *testing.T) {
+	db := NewTestDB(t, "snapshot_compact.db")
+
+	db.Put("a", "1")
+	snap, _ := db.CreateSnapshot()
+
+	db.Put("a", "2")
+	db.Compact()
+
+	val, err := db.ReadAtSnapshot("a", snap)
+	if err != nil {
+		t.Fatalf("snapshot read failed after compaction")
+	}
+	if val != "1" {
+		t.Fatalf("expected 1, got %s", val)
 	}
 }

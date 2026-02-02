@@ -2,7 +2,7 @@ package minidatabase
 
 import (
 	"io"
-	"mini-database/internal/record"
+	"mini-database/core/record"
 	"os"
 )
 

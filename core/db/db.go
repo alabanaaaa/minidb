@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	snapshotpkg "mini-database/internal/snapshot"
+	snapshotpkg "mini-database/core/snapshot"
 )
 
 type DB struct {
@@ -179,6 +179,10 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 		indexCopy[k] = v
 	}
 
+	if len(indexCopy) == 0 {
+		panic("snapshot index is empty")
+	}
+
 	snap, err := db.snapshots.Create(size, indexCopy)
 	if err != nil {
 		return nil, err
@@ -192,7 +196,7 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 // ReadAtSnapshot reads a key as it existed at a given snapshot
 func (db *DB) ReadAtSnapshot(key string, snap *snapshotpkg.Snapshot) (string, error) {
 	db.mu.RLock()
-	defer db.mu.Unlock()
+	defer db.mu.RUnlock()
 
 	offset, ok := snap.Index[key]
 	if !ok {

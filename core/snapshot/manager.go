@@ -10,12 +10,6 @@ import (
 )
 
 // Snapshot represents a point-in-time view of the DB
-type DBSnapshot struct {
-	ID        uint64
-	CreatedAt time.Time
-	MaxOffset int64
-	index     map[string]int64
-}
 
 // Manager handles all snapshots for a DB
 type Manager struct {
@@ -92,15 +86,16 @@ func (m *Manager) Create(maxOffset int64, index map[string]int64) (Snapshot, err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	indexCopy := make(map[string]int64, len(index))
+	IndexCopy := make(map[string]int64, len(index))
 	for k, v := range index {
-		indexCopy[k] = v
+		IndexCopy[k] = v
 	}
 
 	snap := Snapshot{
 		ID:        m.nextID,
 		CreatedAt: time.Now(),
 		MaxOffset: maxOffset,
+		Index:     IndexCopy,
 	}
 
 	// Persist snapshot to file
