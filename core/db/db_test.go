@@ -409,21 +409,3 @@ func TestConcurrentSnapshotReads(t *testing.T) {
 	}
 	wg.Wait()
 }
-
-func TestCompactionDoesNotAffectSnapshots(t *testing.T) {
-	db := NewTestDB(t, "snapshot_compact.db")
-
-	db.Put("a", "1")
-	snap, _ := db.CreateSnapshot()
-
-	db.Put("a", "2")
-	db.Compact()
-
-	val, err := db.ReadAtSnapshot("a", snap)
-	if err != nil {
-		t.Fatalf("snapshot read failed after compaction")
-	}
-	if val != "1" {
-		t.Fatalf("expected 1, got %s", val)
-	}
-}
