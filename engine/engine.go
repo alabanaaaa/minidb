@@ -6,39 +6,35 @@ import (
 )
 
 type Engine struct {
-	inventory map[string]float64
-	logs      []interface{}
+	inventory *InventoryService
+	logs      []any
 }
 
 func NewEngine() *Engine {
 	return &Engine{
-		inventory: make(map[string]float64),
-		logs:      []interface{}{},
+		inventory: NewInventoryService(),
+		logs:      []any{},
 	}
 }
 
 func (e *Engine) ApplyStock(stock core.StockItem) {
-	e.inventory[stock.ProductID] += stock.Quantity
+	e.inventory.Add(stock.ProductID, stock.Quantity)
 	e.logs = append(e.logs, stock)
 }
 
 func (e *Engine) ApplySale(sale core.Sale) error {
-	current := e.inventory[sale.ProductID]
+	current := e.inventory.Get(sale.ProductID)
 
 	if current < sale.Quantity {
 		return errors.New("insufficient stock")
 	}
 
-	e.inventory[sale.ProductID] -= sale.Quantity
+	e.inventory.Reduce(sale.ProductID, sale.Quantity)
 	e.logs = append(e.logs, sale)
 
 	return nil
 }
 
 func (e *Engine) GetStock(productID string) float64 {
-	return e.inventory[productID]
-}
-
-func (e *Engine) Logs() []interface{} {
-	return e.logs
+	return e.inventory.Get(productID)
 }

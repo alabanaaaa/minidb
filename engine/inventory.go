@@ -1,47 +1,45 @@
 package engine
 
-import "time"
-
-type StockItem struct {
-	ID        string
-	Name      string
-	CostPrice int
-	Quantity  int
-	CreatedAt time.Time
-}
+import (
+	"errors"
+	"sync"
+)
 
 type InventoryService struct {
-	items map[string]*StockItem
+	mu    sync.RWMutex
+	items map[string]float64
 }
 
 func NewInventoryService() *InventoryService {
 	return &InventoryService{
-		items: make(map[string]*StockItem),
+		items: make(map[string]float64),
 	}
 }
 
-func (i *InventoryService) AddItem(id, name string, costPrice, quantity int) error {
-	i.items[id] = &StockItem{
-		ID:        id,
-		Name:      name,
-		CostPrice: costPrice,
-		Quantity:  quantity,
-		CreatedAt: time.Now(),
+func (i *InventoryService) Add(productID string, quantity float64) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.items[productID] += quantity
+}
+
+func (i *InventoryService) Reduce(productID string, quantity float64) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	current := i.items[productID]
+
+	if current < quantity {
+		return errors.New("insufficient stock")
 	}
+
+	i.items[productID] -= quantity
 	return nil
-
 }
 
-func (i *InventoryService) ReducedStock(id string, quantity int) bool {
-	item, exists := i.items[id]
-	if !exists || item.Quantity < quantity {
-		return false
-	}
-	item.Quantity -= quantity
-	return true
-}
+func (i *InventoryService) Get(productID string) float64 {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 
-func (i *InventoryService) GetStock(id string) (*StockItem, bool) {
-	item, exists := i.items[id]
-	return item, exists
+	return i.items[productID]
 }
