@@ -1,45 +1,37 @@
 package engine
 
 import (
-	"errors"
-	"sync"
+	"mini-database/core"
 )
 
 type InventoryService struct {
-	mu    sync.RWMutex
-	items map[string]float64
+	items map[string]int64
 }
 
 func NewInventoryService() *InventoryService {
 	return &InventoryService{
-		items: make(map[string]float64),
+		items: make(map[string]int64),
 	}
 }
 
-func (i *InventoryService) Add(productID string, quantity float64) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	i.items[productID] += quantity
+func (i *InventoryService) Add(productID string, qty int64) {
+	i.items[productID] += qty
 }
 
-func (i *InventoryService) Reduce(productID string, quantity float64) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
+func (i *InventoryService) Reduce(productID string, qty int64) error {
 	current := i.items[productID]
 
-	if current < quantity {
-		return errors.New("insufficient stock")
+	if current < qty {
+		return core.NewDomainError(
+			core.ErrCodeInsufficientStock,
+			"insufficient stock",
+		)
 	}
 
-	i.items[productID] -= quantity
+	i.items[productID] -= qty
 	return nil
 }
 
-func (i *InventoryService) Get(productID string) float64 {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
+func (i *InventoryService) Get(productID string) int64 {
 	return i.items[productID]
 }

@@ -7,55 +7,71 @@ import (
 
 func TestStockIncrease(t *testing.T) {
 	e := NewEngine()
+	defer e.Close()
 
-	e.ApplyStock(core.StockItem{
+	err := e.ApplyStock(core.StockItem{
 		ProductID: "carrot",
-		Quantity:  1.0,
+		Quantity:  1000, // 1 carrot = 1000 units
 		Cost:      3000,
 	})
+	if err != nil {
+		t.Fatalf("failed to apply stock: %v", err)
+	}
 
-	if e.GetStock("carrot") != 1.0 {
-		t.Errorf("expected stock 1.0 got %v", e.GetStock("carrot"))
+	if e.GetStock("carrot") != 1000 {
+		t.Errorf("expected stock 1000 got %v", e.GetStock("carrot"))
 	}
 }
 
 func TestSaleReducesStock(t *testing.T) {
 	e := NewEngine()
+	defer e.Close()
 
-	e.ApplyStock(core.StockItem{
+	err := e.ApplyStock(core.StockItem{
 		ProductID: "carrot",
-		Quantity:  1.0,
+		Quantity:  1000,
 		Cost:      3000,
 	})
+	if err != nil {
+		t.Fatalf("failed to apply stock: %v", err)
+	}
 
-	err := e.ApplySale(core.Sale{
+	err = e.ApplySale(core.Sale{
 		ProductID: "carrot",
-		Quantity:  0.2,
+		Quantity:  200, // 0.2 carrot = 200 units
 		Price:     100,
+		WorkerID:  "worker1",
+		Payment:   core.PaymentCash,
 	})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if e.GetStock("carrot") != 0.8 {
-		t.Errorf("expected stock 0.8 got %v", e.GetStock("carrot"))
+	if e.GetStock("carrot") != 800 {
+		t.Errorf("expected stock 800 got %v", e.GetStock("carrot"))
 	}
 }
 
 func TestCannotOversell(t *testing.T) {
 	e := NewEngine()
+	defer e.Close()
 
-	e.ApplyStock(core.StockItem{
+	err := e.ApplyStock(core.StockItem{
 		ProductID: "carrot",
-		Quantity:  1.0,
+		Quantity:  1000,
 		Cost:      3000,
 	})
+	if err != nil {
+		t.Fatalf("failed to apply stock: %v", err)
+	}
 
-	err := e.ApplySale(core.Sale{
+	err = e.ApplySale(core.Sale{
 		ProductID: "carrot",
-		Quantity:  2.0,
+		Quantity:  2000,
 		Price:     100,
+		WorkerID:  "worker1",
+		Payment:   core.PaymentCash,
 	})
 
 	if err == nil {
