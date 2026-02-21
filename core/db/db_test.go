@@ -1,4 +1,4 @@
-package minidatabase
+package db
 
 import (
 	"path/filepath"

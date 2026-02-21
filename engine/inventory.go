@@ -35,3 +35,11 @@ func (i *InventoryService) Reduce(productID string, qty int64) error {
 func (i *InventoryService) Get(productID string) int64 {
 	return i.items[productID]
 }
+
+func (i *InventoryService) Snapshot() map[string]int64 {
+	snapshot := make(map[string]int64)
+	for k, v := range i.items {
+		snapshot[k] = v
+	}
+	return snapshot
+}

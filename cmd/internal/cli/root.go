@@ -17,3 +17,14 @@ func Execute() {
 		os.Exit(1)
 	}
 }
+
+func init() {
+	rootCmd.AddCommand(inventoryCmd)
+	rootCmd.AddCommand(saleCmd)
+	rootCmd.AddCommand(reconcileCmd)
+	rootCmd.AddCommand(sessionCmd)
+	rootCmd.AddCommand(simulateCmd)
+	rootCmd.AddCommand(ledgerCmd)
+	rootCmd.AddCommand(reportCmd)
+
+}

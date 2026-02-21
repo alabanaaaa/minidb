@@ -70,8 +70,9 @@ func (e *Engine) Reconcile(workerID string, declaredCash, declaredMpesa int64) (
 	recData, _ := json.Marshal(rec)
 
 	event := Event{
-		Type: "reconciliation",
-		Data: recData,
+		Type:      "reconciliation",
+		Data:      recData,
+		Timestamp: time.Now(),
 	}
 
 	if err := e.persist(event); err != nil {
