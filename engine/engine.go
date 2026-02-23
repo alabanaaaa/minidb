@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,18 +13,21 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/jung-kurt/gofpdf"
 )
 
 type Event struct {
-	Type      string          `json:"type"`
-	Data      json.RawMessage `json:"data"`
-	Timestamp time.Time 
-	Hash  string       `json:"hash"`
+	Type         string          `json:"type"`
+	Data         json.RawMessage `json:"data"`
+	Timestamp    time.Time
+	Hash         string `json:"hash"`
 	PreviousHash string `json:"previous_hash"`
 }
 
 type Engine struct {
 	inventory *InventoryService
+	storeID   string
 	db        *coredb.DB
 	events    []Event // In-memory event log for reconciliation
 	mu        sync.RWMutex
@@ -660,9 +664,6 @@ func (e *Engine) ReplicateFrom(url string) error {
 	return nil
 }
 
-
-
-
 func (e *Engine) ExportAudit(filename string) error {
 
 	file, err := os.Create(filename)
@@ -682,7 +683,6 @@ func (e *Engine) ExportAudit(filename string) error {
 	return nil
 }
 
-
 func (e *Engine) RecordSale(sale core.Sale) error {
 
 	data, err := json.Marshal(sale)
@@ -697,4 +697,76 @@ func (e *Engine) RecordSale(sale core.Sale) error {
 	}
 
 	return e.appendEvent(evt)
+}
+
+func (e *Engine) EventCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.events)
+}
+
+func (e *Engine) GenerateReceipt(eventIndex int) ([]byte, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if eventIndex >= len(e.events) {
+		return nil, fmt.Errorf("event index is invalid")
+
+	}
+
+	evt := e.events[eventIndex]
+
+	if evt.Type != "sale" {
+		return nil, fmt.Errorf("not a sale event")
+
+	}
+
+	var sale core.Sale
+	if err := json.Unmarshal(evt.Data, &sale); err != nil {
+		return nil, err
+	}
+
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Arial", "", 14)
+
+	pdf.Cell(40, 10, "RECEIPT")
+	pdf.Ln(12)
+
+	pdf.Cell(40, 10, fmt.Sprintf("Quantity: %d", sale.Quantity))
+	pdf.Ln(8)
+
+	pdf.Cell(40, 10, fmt.Sprintf("Price: $%d", sale.Price))
+	pdf.Ln(8)
+
+	pdf.Cell(40, 10, fmt.Sprintf("Total: $%d", sale.Quantity*sale.Price))
+	pdf.Ln(8)
+
+	total := sale.Quantity * sale.Price
+	pdf.Cell(40, 10, fmt.Sprintf("Total: $%d", total))
+
+	var buf bytes.Buffer
+	err := pdf.Output(&buf)
+
+	return buf.Bytes(), err
+
+}
+
+func receiptEngine(dbFile string, storeID string) *Engine {
+	db, err := coredb.OpenDB(dbFile)
+	if err != nil {
+		// fallback to in-memory engine if DB can't be opened
+		return &Engine{
+			inventory: NewInventoryService(),
+			storeID:   storeID,
+			events:    []Event{},
+		}
+	}
+
+	return &Engine{
+		db:        db,
+		storeID:   storeID,
+		inventory: NewInventoryService(),
+		events:    []Event{},
+	}
 }

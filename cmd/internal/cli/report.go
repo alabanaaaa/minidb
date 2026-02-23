@@ -86,11 +86,48 @@ func parseDateRange() (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
+var reportStockCmd = &cobra.Command{
+	Use:   "stock",
+	Short: "Show stock snapshot",
+	RunE: func(cmd *cobra.Command, args []string) error {
+
+		from, to, err := parseDateRange()
+		if err != nil {
+			return err
+		}
+
+		stock := eng.StockSnapshotWithRange(from, to)
+
+		if jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(stock)
+		}
+
+		if csvOut {
+			writer := csv.NewWriter(os.Stdout)
+			defer writer.Flush()
+
+			writer.Write([]string{"item", "quantity"})
+			for item, qty := range stock {
+				writer.Write([]string{item, fmt.Sprintf("%d", qty)})
+			}
+			return nil
+		}
+
+		fmt.Println("📦 Stock Report")
+		for item, qty := range stock {
+			fmt.Printf("%s: %d\n", item, qty)
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	reportCmd.PersistentFlags().StringVar(&fromStr, "from", "", "Start date (YYYY-MM-DD)")
 	reportCmd.PersistentFlags().StringVar(&toStr, "to", "", "End date (YYYY-MM-DD)")
 	reportCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	reportCmd.PersistentFlags().BoolVar(&csvOut, "csv", false, "Output CSV")
+	reportCmd.AddCommand(reportStockCmd)
 
 	reportCmd.AddCommand(reportSalesCmd)
 }
