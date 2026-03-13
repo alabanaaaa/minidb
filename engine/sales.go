@@ -1,33 +1,30 @@
 package engine
 
-import "time"
-
-type Sale struct {
-	ID          string
-	ItemID      string
-	Quantity    int
-	Price       int
-	WorkerID    string
-	PaymentType string
-	Timestamp   time.Time
-}
+import (
+	"mini-database/core"
+)
 
 type SalesService struct {
-	sales []*Sale
+	sales []*core.Sale
 }
 
 func NewSalesService() *SalesService {
 	return &SalesService{
-		sales: []*Sale{},
+		sales: []*core.Sale{},
 	}
 }
 
-func (s *SalesService) RecordSale(sale Sale) {
-	s.sales = append(s.sales, &sale)
+func (s *SalesService) RecordSale(engine *Engine, sale core.Sale) error {
+	// Validate sale
+	if err := sale.Validate(); err != nil {
+		return err
+	}
+	// Record via Engine's event system to ensure consistency
+	return engine.ApplySale(sale)
 }
 
-func (s *SalesService) AllSales() []Sale {
-	sales := make([]Sale, len(s.sales))
+func (s *SalesService) AllSales() []core.Sale {
+	sales := make([]core.Sale, len(s.sales))
 	for i, sale := range s.sales {
 		sales[i] = *sale
 	}

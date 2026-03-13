@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ type DB struct {
 	index     map[string]int64
 	snapshots *snapshotpkg.Manager
 	mu        sync.RWMutex // protects index and storage
+	conn      *sql.DB
 }
 
 // OpenDB opens the storage engine and builds the in-memory index
@@ -214,6 +216,11 @@ func (db *DB) ReadAtSnapshot(key string, snap *snapshotpkg.Snapshot) (string, er
 	}
 
 	return string(rec.Value), nil
+}
+
+func (db *DB) Exec(query string, args ...any) error {
+	_, err := db.conn.Exec(query, args...)
+	return err
 }
 
 // Close safely closes the DB and snapshot manager

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"mini-database/core"
 	coredb "mini-database/core/db"
+	"mini-database/projection"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,16 +23,18 @@ type Event struct {
 	Data         json.RawMessage `json:"data"`
 	Timestamp    time.Time
 	Hash         string `json:"hash"`
-	PreviousHash string `json:"previous_hash"`
+	PreviousHash string `json:"previous_hash"` // ...existing code...
+
 }
 
 type Engine struct {
-	inventory *InventoryService
-	storeID   string
-	db        *coredb.DB
-	events    []Event // In-memory event log for reconciliation
-	mu        sync.RWMutex
-	session   *Session
+	inventory         *InventoryService
+	storeID           string
+	db                *coredb.DB
+	events            []Event // In-memory event log for reconciliation
+	mu                sync.RWMutex
+	session           *Session
+	projectionManager *projection.Manager
 }
 
 type SalesSummary struct {
@@ -54,8 +57,9 @@ type Snapshot struct {
 // In-memory only
 func NewEngine() *Engine {
 	return &Engine{
-		inventory: NewInventoryService(),
-		events:    []Event{},
+		inventory:         NewInventoryService(),
+		events:            []Event{},
+		projectionManager: nil, // Explicitly nil for in-memory
 	}
 }
 
@@ -76,6 +80,13 @@ func NewEngineWithDB(dbPath string) (*Engine, error) {
 		events:    []Event{},
 	}
 
+	// Initialize projection manager
+	pm := projection.NewManager()
+	pm.Register(
+		projection.NewSalesProjection(database),
+	)
+	engine.projectionManager = pm
+
 	if err := engine.replay(); err != nil {
 		database.Close()
 		return nil, err
@@ -92,29 +103,8 @@ func (e *Engine) replay() error {
 		return nil
 	}
 
-	data, err := e.db.Get("__event_log__")
-	if err != nil {
-		return nil // no events yet
-	}
-
-	var events []Event
-	if err := json.Unmarshal([]byte(data), &events); err != nil {
-		return core.NewDomainErrorWithCause(
-			core.ErrCodePersistence,
-			"failed to decode event log",
-			err,
-		)
-	}
-
-	for _, event := range events {
-		if err := e.applyEvent(event); err != nil {
-			return err
-		}
-	}
-
-	e.events = events
-
-	return nil
+	// Remove old array-based loading; use individual events
+	return e.loadEvents() // Call the existing loadEvents method
 }
 
 // Apply handles deterministic state transitions (used by replay AND runtime)
@@ -750,23 +740,4 @@ func (e *Engine) GenerateReceipt(eventIndex int) ([]byte, error) {
 
 	return buf.Bytes(), err
 
-}
-
-func receiptEngine(dbFile string, storeID string) *Engine {
-	db, err := coredb.OpenDB(dbFile)
-	if err != nil {
-		// fallback to in-memory engine if DB can't be opened
-		return &Engine{
-			inventory: NewInventoryService(),
-			storeID:   storeID,
-			events:    []Event{},
-		}
-	}
-
-	return &Engine{
-		db:        db,
-		storeID:   storeID,
-		inventory: NewInventoryService(),
-		events:    []Event{},
-	}
 }
