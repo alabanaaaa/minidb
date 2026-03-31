@@ -26,5 +26,6 @@ func init() {
 	rootCmd.AddCommand(simulateCmd)
 	rootCmd.AddCommand(ledgerCmd)
 	rootCmd.AddCommand(reportCmd)
+	rootCmd.AddCommand(ghostCmd)
 
 }

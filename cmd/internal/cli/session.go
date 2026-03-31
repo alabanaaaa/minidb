@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -19,13 +18,18 @@ var sessionStartCmd = &cobra.Command{
 	Short: "Start a worker session",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if activeWorker != "" {
+		state, err := loadSessionState()
+		if err == nil && state.ActiveWorker != "" {
 			fmt.Println("A session is already active. End it first.")
 			return
 		}
 
-		activeWorker = args[0]
-		fmt.Printf("Session started for worker: %s\n", activeWorker)
+		if err := setActiveWorker(args[0]); err != nil {
+			fmt.Println("Failed to start session:", err)
+			return
+		}
+
+		fmt.Printf("Session started for worker: %s\n", args[0])
 	},
 }
 
@@ -33,38 +37,44 @@ var sessionEndCmd = &cobra.Command{
 	Use:   "end",
 	Short: "End active session",
 	Run: func(cmd *cobra.Command, args []string) {
-		if activeWorker == "" {
+		state, err := loadSessionState()
+		if err != nil || state.ActiveWorker == "" {
 			fmt.Println("No active session.")
 			return
 		}
 
-		fmt.Printf("Session ended for worker: %s\n", activeWorker)
-		activeWorker = ""
+		worker := state.ActiveWorker
+		if err := clearActiveWorker(); err != nil {
+			fmt.Println("Failed to end session:", err)
+			return
+		}
+
+		fmt.Printf("Session ended for worker: %s\n", worker)
 	},
 }
 
 var sessionResumeCmd = &cobra.Command{
 	Use: "resume",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Resume logic would go here
-		s := eng.ResumeSession()
-		if s == nil {
+		state, err := loadSessionState()
+		if err != nil || state.ActiveWorker == "" {
 			fmt.Println("No active session.")
 			return
 		}
 
-		fmt.Printf("Resumed session for worker: %s at %s\n", s.WorkerID, s.StartTime.Format(time.RFC3339))
+		fmt.Printf("Resumed session for worker: %s\n", state.ActiveWorker)
 	},
 }
 var sessionStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show active session",
 	Run: func(cmd *cobra.Command, args []string) {
-		if activeWorker == "" {
+		state, err := loadSessionState()
+		if err != nil || state.ActiveWorker == "" {
 			fmt.Println("No active session.")
 			return
 		}
-		fmt.Printf("Active worker: %s\n", activeWorker)
+		fmt.Printf("Active worker: %s\n", state.ActiveWorker)
 
 	},
 }

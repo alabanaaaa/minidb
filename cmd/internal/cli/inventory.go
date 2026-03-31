@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"mini-database/core"
 	"mini-database/engine"
+	"strconv"
 
 	"github.com/spf13/cobra"
-
-	"strconv"
 )
 
 var eng *engine.Engine
@@ -59,55 +58,8 @@ var addStockCmd = &cobra.Command{
 	},
 }
 
-// Record sale command
-var recordSaleCmd = &cobra.Command{
-	Use:   "sale [productID] [quantity] [price] [workerID] [payment]",
-	Short: "Record a sale for a product",
-	Args:  cobra.ExactArgs(5),
-	Run: func(cmd *cobra.Command, args []string) {
-		qty, err := strconv.ParseInt(args[1], 10, 64)
-		if err != nil {
-			fmt.Println("Invalid quantity:", err)
-			return
-		}
-		price, err := strconv.ParseInt(args[2], 10, 64)
-		if err != nil {
-			fmt.Println("Invalid price:", err)
-			return
-		}
-
-		var payment core.PaymentMethod
-		switch args[4] {
-		case "cash":
-			payment = core.PaymentCash
-		case "mpesa":
-			payment = core.PaymentMpesa
-		default:
-			fmt.Println("Invalid payment method, must be 'cash' or 'mpesa'")
-			return
-		}
-
-		if activeWorker == "" {
-			fmt.Println("No active session. Start one with: ./pos session start [workerID]")
-			return
-		}
-
-		sale := core.Sale{
-			ProductID: args[0],
-			Quantity:  qty,
-			Price:     price,
-			WorkerID:  activeWorker,
-			Payment:   payment,
-		}
-
-		if err := eng.ApplySale(sale); err != nil {
-			fmt.Println("Error recording sale:", err)
-			return
-		}
-
-		fmt.Printf("Recorded sale of %d units of %s at price %d\n", qty, args[0], price)
-	},
-}
+// Record sale command - REMOVED: Use ./pos sale --product ... instead
+// The sale command with flags is now the canonical way to record sales
 
 // Check stock command
 var checkStockCmd = &cobra.Command{
@@ -122,6 +74,5 @@ var checkStockCmd = &cobra.Command{
 
 func init() {
 	inventoryCmd.AddCommand(addStockCmd)
-	inventoryCmd.AddCommand(recordSaleCmd)
 	inventoryCmd.AddCommand(checkStockCmd)
 }

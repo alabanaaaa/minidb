@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -182,7 +183,7 @@ func (db *DB) CreateSnapshot() (*snapshotpkg.Snapshot, error) {
 	}
 
 	if len(indexCopy) == 0 {
-		panic("snapshot index is empty")
+		return nil, errors.New("snapshot index is empty")
 	}
 
 	snap, err := db.snapshots.Create(size, indexCopy)
@@ -219,6 +220,9 @@ func (db *DB) ReadAtSnapshot(key string, snap *snapshotpkg.Snapshot) (string, er
 }
 
 func (db *DB) Exec(query string, args ...any) error {
+	if db.conn == nil {
+		return fmt.Errorf("SQL connection not initialized")
+	}
 	_, err := db.conn.Exec(query, args...)
 	return err
 }

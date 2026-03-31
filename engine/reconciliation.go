@@ -7,30 +7,37 @@ import (
 )
 
 func (e *Engine) Reconcile(workerID string, declaredCash, declaredMpesa int64) (core.Reconciliation, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	var events []Event
-
-	// Get events from persistent store or in-memory
-	if e.db != nil {
-		data, err := e.db.Get("__event_log__")
-		if err != nil || data == "" {
-			events = e.events
-		} else {
-			if err := json.Unmarshal([]byte(data), &events); err != nil {
-				return core.Reconciliation{}, err
-			}
-		}
-	} else {
-		events = e.events
-	}
+	events := e.events
 
 	var expectedCash int64
 	var expectedMpesa int64
 
+	var lastReconcileTime time.Time
+
+	for _, event := range events {
+		if event.Type != "reconciliation" {
+			continue
+		}
+
+		var rec core.Reconciliation
+		if err := json.Unmarshal(event.Data, &rec); err != nil {
+			continue
+		}
+
+		if rec.WorkerID == workerID && event.Timestamp.After(lastReconcileTime) {
+			lastReconcileTime = event.Timestamp
+		}
+	}
+
 	for _, event := range events {
 		if event.Type != "sale" {
+			continue
+		}
+
+		if !event.Timestamp.After(lastReconcileTime) {
 			continue
 		}
 
@@ -75,7 +82,7 @@ func (e *Engine) Reconcile(workerID string, declaredCash, declaredMpesa int64) (
 		Timestamp: time.Now(),
 	}
 
-	if err := e.persist(event); err != nil {
+	if err := e.appendEventLocked(event); err != nil {
 		return rec, err
 	}
 

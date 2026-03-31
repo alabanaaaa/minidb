@@ -1,33 +1,80 @@
 package main
 
 import (
-	"fmt"
-	api "mini-database/API"
-	"mini-database/engine"
+	"context"
+	"log/slog"
+	"net/http"
 	"os"
-	"path/filepath"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"mini-database/internal/api"
+	"mini-database/internal/config"
+	"mini-database/internal/db"
 )
 
 func main() {
-	// Ensure data directory exists
-	dataDir := "./data"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		fmt.Println("failed to create data dir:", err)
-		os.Exit(1)
-	}
-
-	dbPath := filepath.Join(dataDir, "storage.db")
-
-	e, err := engine.NewEngineWithDB(dbPath)
+	cfg, err := config.Load()
 	if err != nil {
-		fmt.Println("failed to start engine with DB, falling back to in-memory:", err)
-		e = engine.NewEngine()
-	}
-
-	server := &api.Server{Engine: e}
-
-	if err := server.Start(":8080"); err != nil {
-		fmt.Println("server exited:", err)
+		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+
+	setupLogging(cfg.LogLevel)
+
+	slog.Info("starting server", "port", cfg.HTTPPort, "env", cfg.Env)
+
+	database, err := db.New(cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	server := api.New(database, cfg)
+
+	addr := ":" + strconv.Itoa(cfg.HTTPPort)
+
+	go func() {
+		slog.Info("http server listening", "addr", addr)
+		if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
+			slog.Error("http server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
+	}
+
+	slog.Info("server stopped gracefully")
+}
+
+func setupLogging(level string) {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: lvl}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	slog.SetDefault(slog.New(handler))
 }

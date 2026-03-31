@@ -19,6 +19,16 @@ var saleCmd = &cobra.Command{
 		worker, _ := cmd.Flags().GetString("worker")
 		paymentStr, _ := cmd.Flags().GetString("payment")
 
+		// If worker not provided, try to get from active session
+		if worker == "" {
+			activeWorker, err := getActiveWorker()
+			if err != nil || activeWorker == "" {
+				fmt.Println("No active session. Provide --worker flag or start a session with: ./pos session start [workerID]")
+				return
+			}
+			worker = activeWorker
+		}
+
 		qty, err := strconv.ParseInt(qtyStr, 10, 64)
 		if err != nil {
 			fmt.Println("Invalid quantity")
@@ -63,12 +73,11 @@ func init() {
 	saleCmd.Flags().String("product", "", "Product ID")
 	saleCmd.Flags().String("qty", "", "Quantity sold")
 	saleCmd.Flags().String("price", "", "Price per unit")
-	saleCmd.Flags().String("worker", "", "Worker ID")
+	saleCmd.Flags().String("worker", "", "Worker ID (optional if session active)")
 	saleCmd.Flags().String("payment", "", "Payment method: cash or mpesa")
 
 	saleCmd.MarkFlagRequired("product")
 	saleCmd.MarkFlagRequired("qty")
 	saleCmd.MarkFlagRequired("price")
-	saleCmd.MarkFlagRequired("worker")
 	saleCmd.MarkFlagRequired("payment")
 }

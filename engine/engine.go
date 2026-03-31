@@ -2,12 +2,11 @@ package engine
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"mini-database/core"
 	coredb "mini-database/core/db"
+	"mini-database/ledger"
 	"mini-database/projection"
 	"net/http"
 	"os"
@@ -56,11 +55,12 @@ type Snapshot struct {
 
 // In-memory only
 func NewEngine() *Engine {
-	return &Engine{
+	engine := &Engine{
 		inventory:         NewInventoryService(),
 		events:            []Event{},
-		projectionManager: nil, // Explicitly nil for in-memory
+		projectionManager: projection.NewManager(), // initialize manager to avoid nil panics
 	}
+	return engine
 }
 
 // Persistent engine
@@ -75,153 +75,131 @@ func NewEngineWithDB(dbPath string) (*Engine, error) {
 	}
 
 	engine := &Engine{
-		inventory: NewInventoryService(),
-		db:        database,
-		events:    []Event{},
+		inventory:         NewInventoryService(),
+		db:                database,
+		events:            []Event{},
+		projectionManager: projection.NewManager(),
 	}
 
-	// Initialize projection manager
-	pm := projection.NewManager()
-	pm.Register(
+	// register persistent projections (example: sales projection)
+	engine.projectionManager.Register(
 		projection.NewSalesProjection(database),
 	)
-	engine.projectionManager = pm
 
-	if err := engine.replay(); err != nil {
+	if err := engine.loadEvents(); err != nil {
 		database.Close()
 		return nil, err
 	}
 
+	// Restore session from DB
+	_ = engine.loadSession()
+
 	return engine, nil
-}
-
-func (e *Engine) replay() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.db == nil {
-		return nil
-	}
-
-	// Remove old array-based loading; use individual events
-	return e.loadEvents() // Call the existing loadEvents method
 }
 
 // Apply handles deterministic state transitions (used by replay AND runtime)
 func (e *Engine) applyEvent(event Event) error {
+	// Apply state changes based on event type. Do NOT persist here.
 	switch event.Type {
-
 	case "stock":
 		var stock core.StockItem
 		if err := json.Unmarshal(event.Data, &stock); err != nil {
 			return err
 		}
 		e.inventory.Add(stock.ProductID, stock.Quantity)
-
 	case "sale":
 		var sale core.Sale
 		if err := json.Unmarshal(event.Data, &sale); err != nil {
 			return err
 		}
-
-		current := e.inventory.Get(sale.ProductID)
-		if current < sale.Quantity {
-			return core.NewDomainError(
-				core.ErrCodeInsufficientStock,
-				fmt.Sprintf("insufficient stock during replay for %s", sale.ProductID),
-			)
-		}
-
 		if err := e.inventory.Reduce(sale.ProductID, sale.Quantity); err != nil {
 			return err
 		}
-
-	case "reconciliation":
-		// For now reconciliation does not mutate inventory
-		// Future: track worker balances
-		return nil
-
 	default:
-		return core.NewDomainError(
-			core.ErrCodeInvalidOperation,
-			fmt.Sprintf("unknown event type: %s", event.Type),
-		)
+		// ignore unknown event types for now
+	}
+	return nil
+}
+
+// loadEvents reads indexed events (event:1, event:2...) and applies each event.
+func (e *Engine) loadEvents() error {
+	if e.db == nil {
+		return nil
+	}
+
+	// Try to load from snapshot first for faster recovery
+	startIndex := 0
+	if snapIndex, err := e.loadSnapshot(); err == nil && snapIndex > 0 {
+		startIndex = snapIndex
+	}
+
+	// Load index to know how many events exist
+	indexStr, err := e.db.Get("event_index")
+	if err != nil || indexStr == "" {
+		return nil // No events yet
+	}
+
+	totalEvents, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return err
+	}
+
+	// Clear in-memory and replay deterministically
+	e.events = []Event{}
+
+	for i := startIndex + 1; i <= totalEvents; i++ {
+		key := fmt.Sprintf("event:%d", i)
+		data, err := e.db.Get(key)
+		if err != nil || data == "" {
+			continue
+		}
+
+		var ev Event
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			return err
+		}
+
+		if err := e.applyEvent(ev); err != nil {
+			return err
+		}
+		e.events = append(e.events, ev)
 	}
 
 	return nil
 }
 
-func (e *Engine) persist(event Event) error {
-	// Always track events in memory for reconciliation
-	e.events = append(e.events, event)
-
-	if e.db == nil {
-		return nil
-	}
-
-	existing, _ := e.db.Get("__event_log__")
-
-	var events []Event
-	if existing != "" {
-		if err := json.Unmarshal([]byte(existing), &events); err != nil {
-			return err
-		}
-	}
-
-	events = append(events, event)
-
-	updated, err := json.Marshal(events)
-	if err != nil {
-		return err
-	}
-
-	return e.db.Put("__event_log__", string(updated))
-}
-
 func (e *Engine) ApplyStock(stock core.StockItem) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	// validate
 	if err := stock.Validate(); err != nil {
 		return err
 	}
-
-	data, _ := json.Marshal(stock)
-
+	data, err := json.Marshal(stock)
+	if err != nil {
+		return err
+	}
 	event := Event{
 		Type:      "stock",
 		Data:      data,
 		Timestamp: time.Now(),
 	}
-
-	if err := e.applyEvent(event); err != nil {
-		return err
-	}
-
-	return e.persist(event)
+	return e.appendEvent(event)
 }
 
 func (e *Engine) ApplySale(sale core.Sale) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	// validate
 	if err := sale.Validate(); err != nil {
 		return err
 	}
-
-	data, _ := json.Marshal(sale)
-
+	data, err := json.Marshal(sale)
+	if err != nil {
+		return err
+	}
 	event := Event{
 		Type:      "sale",
 		Data:      data,
 		Timestamp: time.Now(),
 	}
-
-	if err := e.applyEvent(event); err != nil {
-		return err
-	}
-
-	return e.persist(event)
+	return e.appendEvent(event)
 }
 
 func (e *Engine) GetStock(productID string) int64 {
@@ -428,6 +406,36 @@ func (e *Engine) StockSnapshotWithRange(from, to time.Time) map[string]int64 {
 }
 
 func (e *Engine) appendEvent(evt Event) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.appendEventLocked(evt)
+}
+
+func (e *Engine) appendEventLocked(evt Event) error {
+	// set timestamp first
+	evt.Timestamp = time.Now()
+
+	// apply to in-memory state first (deterministic)
+	if err := e.applyEvent(evt); err != nil {
+		return err
+	}
+
+	// If no DB, just keep in-memory (for tests)
+	if e.db == nil {
+		if len(e.events) > 0 {
+			evt.PreviousHash = e.events[len(e.events)-1].Hash
+		} else {
+			evt.PreviousHash = ""
+		}
+		evt.Hash = hashEvent(evt)
+		e.events = append(e.events, evt)
+		return nil
+	}
+
+	// Get last hash for chain
+	lastHash, _ := e.db.Get(e.key("last_event_hash"))
+	evt.PreviousHash = lastHash
+	evt.Hash = hashEvent(evt)
 
 	indexStr, _ := e.db.Get("event_index")
 
@@ -455,9 +463,14 @@ func (e *Engine) appendEvent(evt Event) error {
 
 	e.events = append(e.events, evt)
 
-	// Auto-snapshot every 100 events
 	if index%100 == 0 {
-		e.SaveSnapshot()
+		if err := e.SaveSnapshot(); err != nil {
+			return fmt.Errorf("failed to save snapshot at event %d: %w", index, err)
+		}
+	}
+
+	if err := e.db.Put(e.key("last_event_hash"), evt.Hash); err != nil {
+		return err
 	}
 
 	return nil
@@ -522,13 +535,18 @@ func (e *Engine) EndSession() error {
 }
 
 func (e *Engine) SaveSnapshot() error {
-
-	indexBytes, _ := e.db.Get("event_index")
+	indexBytes, err := e.db.Get("event_index")
+	if err != nil {
+		return fmt.Errorf("failed to read event index for snapshot: %w", err)
+	}
 	if indexBytes == "" {
 		return nil
 	}
 
-	index, _ := strconv.Atoi(indexBytes)
+	index, err := strconv.Atoi(indexBytes)
+	if err != nil {
+		return fmt.Errorf("corrupted event index in snapshot: %w", err)
+	}
 	snapshot := Snapshot{
 		LastEventIndex: index,
 		Inventory:      e.inventory.items,
@@ -559,36 +577,6 @@ func (e *Engine) loadSnapshot() (int, error) {
 	return snap.LastEventIndex, nil
 }
 
-func (e *Engine) loadEvents() error {
-
-	lastSnapIndex, _ := e.loadSnapshot()
-
-	indexBytes, _ := e.db.Get("event_index")
-	if indexBytes == "" {
-		return nil
-	}
-
-	index, _ := strconv.Atoi(indexBytes)
-	for i := lastSnapIndex + 1; i <= index; i++ {
-
-		key := fmt.Sprintf("event:%d", i)
-		data, _ := e.db.Get(key)
-		if data == "" {
-			continue
-		}
-
-		var evt Event
-		if err := json.Unmarshal([]byte(data), &evt); err != nil {
-			continue
-		}
-
-		e.applyEvent(evt)
-		e.events = append(e.events, evt)
-	}
-
-	return nil
-}
-
 func (e *Engine) EventsAfter(index int) []Event {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -605,11 +593,8 @@ func (e *Engine) key(suffix string) string {
 	return suffix
 }
 
-// hashEvent computes the SHA256 hash of an event
 func hashEvent(evt Event) string {
-	data, _ := json.Marshal(evt)
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+	return ledger.ComputeHashFromBytes(evt.Data, evt.PreviousHash)
 }
 
 func (e *Engine) AppendReplicatedEvent(evt Event) error {
@@ -617,8 +602,10 @@ func (e *Engine) AppendReplicatedEvent(evt Event) error {
 	defer e.mu.Unlock()
 
 	// Verify hash chain
-	lastHashBytes, _ := e.db.Get(e.key("last_event_hash"))
-	lastHash := string(lastHashBytes)
+	lastHash, err := e.db.Get(e.key("last_event_hash"))
+	if err != nil {
+		return fmt.Errorf("failed to read last hash: %w", err)
+	}
 
 	if evt.PreviousHash != lastHash {
 		return fmt.Errorf("hash chain mismatch")
@@ -632,9 +619,15 @@ func (e *Engine) AppendReplicatedEvent(evt Event) error {
 }
 
 func (e *Engine) ReplicateFrom(url string) error {
-	indexBytes, _ := e.db.Get(e.key("event_index"))
+	indexBytes, err := e.db.Get(e.key("event_index"))
+	if err != nil {
+		return fmt.Errorf("failed to read event index: %w", err)
+	}
 
-	index, _ := strconv.Atoi(string(indexBytes))
+	index, err := strconv.Atoi(string(indexBytes))
+	if err != nil {
+		index = 0
+	}
 
 	resp, err := http.Get(fmt.Sprintf("%s/events?after=%d", url, index))
 	if err != nil {
@@ -643,7 +636,9 @@ func (e *Engine) ReplicateFrom(url string) error {
 	defer resp.Body.Close()
 
 	var events []Event
-	json.NewDecoder(resp.Body).Decode(&events)
+	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+		return fmt.Errorf("failed to decode events from remote: %w", err)
+	}
 
 	for _, evt := range events {
 		if err := e.AppendReplicatedEvent(evt); err != nil {
@@ -730,14 +725,29 @@ func (e *Engine) GenerateReceipt(eventIndex int) ([]byte, error) {
 	pdf.Ln(8)
 
 	pdf.Cell(40, 10, fmt.Sprintf("Total: $%d", sale.Quantity*sale.Price))
-	pdf.Ln(8)
-
-	total := sale.Quantity * sale.Price
-	pdf.Cell(40, 10, fmt.Sprintf("Total: $%d", total))
 
 	var buf bytes.Buffer
 	err := pdf.Output(&buf)
 
 	return buf.Bytes(), err
 
+}
+
+func (e *Engine) VerifyLedger() error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	prev := ""
+	for i, ev := range e.events {
+		// ev.Data is json.RawMessage (bytes) — use it directly
+		expected := ledger.ComputeHashFromBytes(ev.Data, prev)
+		if ev.Hash != expected {
+			return fmt.Errorf("ledger corruption detected at event%d (hash mismatch)", i)
+		}
+		if i > 0 && ev.PreviousHash != prev {
+			return fmt.Errorf("ledger chain broken at event%d (previous hash mismatch)", i)
+		}
+		prev = ev.Hash
+	}
+	return nil
 }
