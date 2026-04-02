@@ -1,0 +1,71 @@
+{{define "title"}}User Management — Mini-Database{{end}}
+{{define "topbar-actions"}}
+<button class="btn btn-primary btn-sm" onclick="document.getElementById('addUserModal').style.display='flex'">+ Add User</button>
+{{end}}
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+<div class="card">
+    <div class="card-header"><h3 class="card-title">Shop Users</h3></div>
+    <div class="card-body">
+        <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+                {{range .Users}}
+                <tr>
+                    <td style="font-weight:500">{{.Name}}</td>
+                    <td>{{.Email}}</td>
+                    <td><span class="badge {{if eq .Role "owner"}}badge-green{{else if eq .Role "manager"}}badge-blue{{else}}badge-amber{{end}}">{{.Role}}</span></td>
+                    <td>{{if .Active}}<span class="badge badge-green">Active</span>{{else}}<span class="badge badge-red">Disabled</span>{{end}}</td>
+                    <td>
+                        {{if ne .Role "owner"}}
+                        <form method="POST" action="/admin/users/{{.ID}}/toggle" style="display:inline">
+                            <button class="btn btn-ghost btn-sm">{{if .Active}}Disable{{else}}Enable{{end}}</button>
+                        </form>
+                        {{if .Active}}
+                        <form method="POST" action="/admin/users/{{.ID}}/role" style="display:inline">
+                            <select name="role" onchange="this.form.submit()" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.75rem;font-family:var(--font);background:var(--white);">
+                                <option value="cashier" {{if eq .Role "cashier"}}selected{{end}}>Cashier</option>
+                                <option value="manager" {{if eq .Role "manager"}}selected{{end}}>Manager</option>
+                            </select>
+                        </form>
+                        {{end}}
+                        {{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+<div class="modal-overlay" id="addUserModal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <h3>Add User</h3>
+        <form method="POST" action="/admin/users/add">
+            <div class="form-group">
+                <label class="form-label">Full Name</label>
+                <input class="form-input" type="text" name="name" required placeholder="e.g. John Kamau">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email</label>
+                <input class="form-input" type="email" name="email" required placeholder="john@shop.com">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Role</label>
+                <select class="form-select" name="role">
+                    <option value="cashier">Cashier</option>
+                    <option value="manager">Manager</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input class="form-input" type="password" name="password" required minlength="6" placeholder="Min 6 characters">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('addUserModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add User</button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

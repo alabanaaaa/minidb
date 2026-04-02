@@ -1,0 +1,384 @@
+{{define "title"}}Forecast & Analytics — Mini-Database{{end}}
+{{define "topbar-actions"}}
+<a href="/forecast?refresh=true" class="btn btn-ghost btn-sm">↻ Refresh Data</a>
+{{end}}
+{{define "content"}}
+<!-- Hero Stats -->
+<div class="stats-grid" style="grid-template-columns: repeat(4, 1fr)">
+    <div class="stat-card" style="background: linear-gradient(135deg, #82b440 0%, #6a9a2e 100%); color: white; border: none;">
+        <div class="stat-label" style="color: rgba(255,255,255,0.8)">Today's Revenue</div>
+        <div class="stat-value" style="color: white; font-size: 2rem;">KES {{.TodayRevenue | printf "%d"}}</div>
+    </div>
+    <div class="stat-card" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none;">
+        <div class="stat-label" style="color: rgba(255,255,255,0.8)">7-Day Projection</div>
+        <div class="stat-value" style="color: white; font-size: 2rem;">KES {{.Next7Days | printf "%.0f"}}</div>
+    </div>
+    <div class="stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none;">
+        <div class="stat-label" style="color: rgba(255,255,255,0.8)">Growth Rate</div>
+        <div class="stat-value" style="color: white; font-size: 2rem;">{{if ge .GrowthRate 0.0}}+{{end}}{{.GrowthRate | printf "%.1f"}}%</div>
+    </div>
+    <div class="stat-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none;">
+        <div class="stat-label" style="color: rgba(255,255,255,0.8)">Stock Alerts</div>
+        <div class="stat-value" style="color: white; font-size: 2rem;">{{.LowStockAlerts}}</div>
+    </div>
+</div>
+
+<!-- Main Charts Row -->
+<div class="grid-2" style="margin-bottom:20px">
+    <!-- Revenue Trend + Forecast -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">📈 Revenue Trend & Forecast</h3>
+            <span style="font-size:0.7rem;color:var(--text-muted)">30-day history + 7-day projection</span>
+        </div>
+        <div class="card-body padded">
+            <canvas id="revenueTrendChart" height="280"></canvas>
+        </div>
+    </div>
+
+    <!-- Product Performance -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">🏆 Product Performance</h3>
+            <span style="font-size:0.7rem;color:var(--text-muted)">Revenue by product</span>
+        </div>
+        <div class="card-body padded">
+            <canvas id="productRadarChart" height="280"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Secondary Charts Row -->
+<div class="grid-3" style="margin-bottom:20px">
+    <!-- Payment Split -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">💳 Payment Methods</h3>
+        </div>
+        <div class="card-body padded" style="display:flex;justify-content:center">
+            <canvas id="paymentDoughnut" height="220"></canvas>
+        </div>
+    </div>
+
+    <!-- Daily Sales Pattern -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">📊 Daily Sales Pattern</h3>
+        </div>
+        <div class="card-body padded">
+            <canvas id="dailyPatternChart" height="220"></canvas>
+        </div>
+    </div>
+
+    <!-- Stock Health -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">📦 Stock Health</h3>
+        </div>
+        <div class="card-body padded" style="display:flex;justify-content:center">
+            <canvas id="stockHealthChart" height="220"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Inventory Forecast Table -->
+<div class="card" style="margin-bottom:20px">
+    <div class="card-header">
+        <h3 class="card-title">🔮 Inventory Forecast & Reorder Recommendations</h3>
+        <a href="/inventory" class="btn btn-ghost btn-sm">View Full Inventory</a>
+    </div>
+    <div class="card-body">
+        {{if .InventoryForecasts}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Current Stock</th>
+                    <th>Daily Avg Sales</th>
+                    <th>Days Until Stockout</th>
+                    <th>Reorder Point</th>
+                    <th>Recommended Order</th>
+                    <th>Confidence</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .InventoryForecasts}}
+                <tr>
+                    <td style="font-weight:500">{{.ProductID}}</td>
+                    <td>{{.CurrentStock}}</td>
+                    <td>{{.DailyAvgSales | printf "%.1f"}}</td>
+                    <td>
+                        <span class="badge badge-{{if le .DaysUntilStock 2}}red{{else if le .DaysUntilStock 5}}amber{{else if le .DaysUntilStock 10}}blue{{else}}green{{end}}">
+                            {{.DaysUntilStock}} days
+                        </span>
+                    </td>
+                    <td>{{.ReorderPoint}}</td>
+                    <td style="font-weight:600">{{.RecommendedOrder}}</td>
+                    <td>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div style="flex:1;height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
+                                <div style="width:{{.Confidence}}%;height:100%;background:{{if ge .Confidence 80.0}}var(--green){{else if ge .Confidence 60.0}}var(--amber){{else}}var(--red){{end}};border-radius:3px"></div>
+                            </div>
+                            <span style="font-size:0.75rem;font-weight:500">{{.Confidence | printf "%.0f"}}%</span>
+                        </div>
+                    </td>
+                    <td>
+                        {{if le .DaysUntilStock 7}}
+                        <button class="btn btn-sm btn-primary">Reorder</button>
+                        {{else}}
+                        <span style="font-size:0.75rem;color:var(--text-muted)">OK</span>
+                        {{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+            <p>No inventory data for forecasting</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<!-- Demand Trends -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">📉 Demand Trends</h3>
+    </div>
+    <div class="card-body padded">
+        {{if .DemandTrends}}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
+            {{range .DemandTrends}}
+            <div style="background:var(--bg);border-radius:12px;padding:16px;border-left:4px solid {{if eq .Trend "rising"}}var(--green){{else if eq .Trend "falling"}}var(--red){{else}}var(--amber){{end}}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-weight:600;font-size:0.9rem">{{.ProductID}}</span>
+                    <span style="font-size:1.2rem">{{if eq .Trend "rising"}}📈{{else if eq .Trend "falling"}}📉{{else}}➡️{{end}}</span>
+                </div>
+                <div style="font-size:1.5rem;font-weight:700;color:{{if eq .Trend "rising"}}var(--green){{else if eq .Trend "falling"}}var(--red){{else}}var(--amber){{end}}">
+                    {{.ChangePct | printf "%+.1f"}}%
+                </div>
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">{{.Prediction}}</div>
+            </div>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <p>Insufficient data for trend analysis</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const colors = {
+    green: '#82b440',
+    greenLight: 'rgba(130,180,64,0.15)',
+    blue: '#3b82f6',
+    blueLight: 'rgba(59,130,246,0.15)',
+    amber: '#f59e0b',
+    amberLight: 'rgba(245,158,11,0.15)',
+    red: '#ef4444',
+    redLight: 'rgba(239,68,68,0.15)',
+    purple: '#8b5cf6',
+    cyan: '#06b6d4',
+    grid: 'rgba(0,0,0,0.06)',
+    text: '#6b7280',
+};
+
+// Revenue Trend + Forecast Chart (live)
+fetch('/api/forecast/revenue-trend')
+    .then(r => r.json())
+    .then(res => {
+        new Chart(document.getElementById('revenueTrendChart'), {
+            type: 'line',
+            data: {
+                labels: res.labels,
+                datasets: [
+                    {
+                        label: 'Actual Revenue',
+                        data: res.actual,
+                        borderColor: colors.green,
+                        backgroundColor: colors.greenLight,
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: colors.green,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                    },
+                    {
+                        label: 'Projected',
+                        data: res.projected,
+                        borderColor: colors.blue,
+                        borderDash: [8, 4],
+                        tension: 0.4,
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: colors.blue,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 11, family: 'Inter' } } },
+                    tooltip: { backgroundColor: '#1a1a2e', titleFont: { size: 12, family: 'Inter', weight: '600' }, bodyFont: { size: 11, family: 'Inter' }, padding: 12, cornerRadius: 8, callbacks: { label: ctx => 'KES ' + (ctx.parsed.y || 0).toLocaleString() } }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9, family: 'Inter' }, maxRotation: 45 } },
+                    y: { grid: { color: colors.grid }, ticks: { font: { size: 10, family: 'Inter' }, callback: v => 'KES ' + v.toLocaleString() }, beginAtZero: true }
+                },
+                animation: { duration: 1200, easing: 'easeOutQuart' }
+            }
+        });
+    });
+
+// Product Radar Chart (live)
+fetch('/api/forecast/product-radar')
+    .then(r => r.json())
+    .then(res => {
+        new Chart(document.getElementById('productRadarChart'), {
+            type: 'radar',
+            data: {
+                labels: res.labels,
+                datasets: [{
+                    label: 'Revenue',
+                    data: res.data,
+                    backgroundColor: 'rgba(130,180,64,0.2)',
+                    borderColor: colors.green,
+                    borderWidth: 2,
+                    pointBackgroundColor: colors.green,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { backgroundColor: '#1a1a2e', padding: 12, cornerRadius: 8, callbacks: { label: ctx => 'KES ' + ctx.parsed.r.toLocaleString() } }
+                },
+                scales: {
+                    r: {
+                        beginAtZero: true,
+                        grid: { color: colors.grid },
+                        pointLabels: { font: { size: 11, family: 'Inter' } },
+                        ticks: { display: false }
+                    }
+                },
+                animation: { duration: 1000, easing: 'easeOutQuart' }
+            }
+        });
+    });
+
+// Payment Methods Doughnut (live from dashboard API)
+fetch('/api/charts/payment-methods')
+    .then(r => r.json())
+    .then(res => {
+        const labels = res.data.map(d => d.method);
+        const totals = res.data.map(d => d.total);
+        new Chart(document.getElementById('paymentDoughnut'), {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    data: totals,
+                    backgroundColor: [colors.green, colors.blue, colors.amber, colors.purple],
+                    borderColor: '#fff',
+                    borderWidth: 3,
+                    hoverOffset: 8,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11, family: 'Inter' } } },
+                    tooltip: { backgroundColor: '#1a1a2e', padding: 12, cornerRadius: 8, callbacks: { label: ctx => {
+                        const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                        const pct = ((ctx.parsed / total) * 100).toFixed(1);
+                        return ` ${ctx.label}: KES ${ctx.parsed.toLocaleString()} (${pct}%)`;
+                    }}}
+                },
+                animation: { animateRotate: true, duration: 1000 }
+            }
+        });
+    });
+
+// Daily Sales Pattern (live)
+fetch('/api/forecast/daily-pattern')
+    .then(r => r.json())
+    .then(res => {
+        new Chart(document.getElementById('dailyPatternChart'), {
+            type: 'bar',
+            data: {
+                labels: res.labels,
+                datasets: [{
+                    label: 'Sales',
+                    data: res.data,
+                    backgroundColor: [colors.green, colors.blue, colors.amber, colors.green, colors.blue, colors.amber, colors.green],
+                    borderRadius: 6,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', padding: 12, cornerRadius: 8, callbacks: { label: ctx => 'KES ' + ctx.parsed.y.toLocaleString() } } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 10, family: 'Inter' } } },
+                    y: { grid: { color: colors.grid }, ticks: { font: { size: 10, family: 'Inter' }, callback: v => 'KES ' + v.toLocaleString() }, beginAtZero: true }
+                },
+                animation: { duration: 800, easing: 'easeOutQuart' }
+            }
+        });
+    });
+
+// Stock Health Gauge (live)
+fetch('/api/forecast/stock-health')
+    .then(r => r.json())
+    .then(res => {
+        new Chart(document.getElementById('stockHealthChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Healthy', 'Low Stock', 'Critical'],
+                datasets: [{
+                    data: [res.healthy, res.low, res.critical],
+                    backgroundColor: [colors.green, colors.amber, colors.red],
+                    borderColor: '#fff',
+                    borderWidth: 3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '70%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11, family: 'Inter' } } },
+                    tooltip: { backgroundColor: '#1a1a2e', padding: 12, cornerRadius: 8 }
+                },
+                animation: { animateRotate: true, duration: 1000 }
+            }
+        });
+    });
+
+// Auto-refresh all charts every 30 seconds
+setInterval(() => {
+    location.reload();
+}, 30000);
+</script>
+{{end}}

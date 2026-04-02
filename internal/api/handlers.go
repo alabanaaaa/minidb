@@ -1,17 +1,25 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"mini-database/core"
 	"mini-database/internal/auth"
+	"mini-database/internal/email"
+	mpesaPkg "mini-database/internal/mpesa"
+	receiptPkg "mini-database/internal/receipt"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -49,6 +57,12 @@ func (s *Server) readinessCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	clientIP := r.RemoteAddr
+	if !s.loginLimiter.Allow(clientIP) {
+		respondError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
+		return
+	}
+
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
@@ -89,6 +103,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in", "user_id", userID, "email", email, "role", role)
+	recordAudit(s.db.DB, r.Context(), shopID, userID, "login", "user", userID, r.RemoteAddr, r.UserAgent(), map[string]string{"email": email, "role": role})
 
 	respondJSON(w, http.StatusOK, loginResponse{
 		AccessToken:  access,
@@ -135,7 +150,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	var lowStockCount int
 	var activeSessions int
 
-	_ = s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), `
 		SELECT 
 			COALESCE(SUM((event_data->>'price')::bigint * (event_data->>'quantity')::bigint), 0),
 			COUNT(*)
@@ -143,24 +158,36 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		WHERE shop_id = $1 AND event_type = 'sale' 
 		AND created_at >= CURRENT_DATE
 	`, shopID).Scan(&todaySales, &todaySaleCount)
+	if err != nil {
+		slog.Warn("dashboard sales query failed", "error", err)
+	}
 
-	_ = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), `
 		SELECT COALESCE(SUM((event_data->>'price')::bigint * (event_data->>'quantity')::bigint), 0)
 		FROM events 
 		WHERE shop_id = $1 AND event_type = 'sale' 
 		AND event_data->>'payment' = '1'
 		AND created_at >= CURRENT_DATE
 	`, shopID).Scan(&todayCash)
+	if err != nil {
+		slog.Warn("dashboard cash query failed", "error", err)
+	}
 
 	todayMpesa = todaySales - todayCash
 
-	_ = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM products WHERE shop_id = $1 AND stock_qty <= min_stock AND active = true
 	`, shopID).Scan(&lowStockCount)
+	if err != nil {
+		slog.Warn("dashboard low stock query failed", "error", err)
+	}
 
-	_ = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM sessions WHERE shop_id = $1 AND status = 'active'
 	`, shopID).Scan(&activeSessions)
+	if err != nil {
+		slog.Warn("dashboard sessions query failed", "error", err)
+	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"today_sales":      todaySales,
@@ -175,10 +202,52 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 	shopID := GetShopID(r)
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 {
+		limit = 50
+	}
+	search := r.URL.Query().Get("search")
+	category := r.URL.Query().Get("category")
+
+	query := `
 		SELECT id, name, sku, category, cost_price, sell_price, stock_qty, min_stock, active, created_at
-		FROM products WHERE shop_id = $1 ORDER BY name
-	`, shopID)
+		FROM products WHERE shop_id = $1
+	`
+	args := []interface{}{shopID}
+	argCount := 1
+
+	if search != "" {
+		argCount++
+		query += fmt.Sprintf(" AND (name ILIKE $%d OR sku ILIKE $%d)", argCount, argCount)
+		args = append(args, "%"+search+"%")
+	}
+	if category != "" {
+		argCount++
+		query += fmt.Sprintf(" AND category = $%d", argCount)
+		args = append(args, category)
+	}
+
+	var total int
+	countQuery := `SELECT COUNT(*) FROM products WHERE shop_id = $1`
+	countArgs := []interface{}{shopID}
+	if search != "" {
+		countQuery += " AND (name ILIKE $2 OR sku ILIKE $2)"
+		countArgs = append(countArgs, "%"+search+"%")
+	}
+	if category != "" {
+		countQuery += fmt.Sprintf(" AND category = $%d", len(countArgs)+1)
+		countArgs = append(countArgs, category)
+	}
+	_ = s.db.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&total)
+
+	query += fmt.Sprintf(" ORDER BY name LIMIT $%d OFFSET $%d", argCount+1, argCount+2)
+	args = append(args, limit, (page-1)*limit)
+
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -251,6 +320,8 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("product created", "id", id, "name", req.Name, "shop", shopID)
+	userID := GetUserID(r)
+	recordAudit(s.db.DB, r.Context(), shopID, userID, "product_created", "product", id, r.RemoteAddr, r.UserAgent(), map[string]string{"name": req.Name, "sku": req.SKU})
 
 	respondCreated(w, map[string]string{"id": id, "name": req.Name})
 }
@@ -334,16 +405,22 @@ func (s *Server) addStock(w http.ResponseWriter, r *http.Request) {
 		})
 
 		var lastHash string
-		_ = tx.QueryRowContext(r.Context(),
+		err = tx.QueryRowContext(r.Context(),
 			`SELECT COALESCE(event_hash, '') FROM events WHERE shop_id = $1 ORDER BY event_seq DESC LIMIT 1`,
 			shopID,
 		).Scan(&lastHash)
+		if err != nil {
+			slog.Warn("failed to get last hash for stock event", "error", err)
+		}
 
 		var seq int64
-		_ = tx.QueryRowContext(r.Context(),
+		err = tx.QueryRowContext(r.Context(),
 			`SELECT COALESCE(MAX(event_seq), 0) FROM events WHERE shop_id = $1`,
 			shopID,
 		).Scan(&seq)
+		if err != nil {
+			slog.Warn("failed to get sequence number for stock event", "error", err)
+		}
 		seq++
 
 		eventHash := computeEventHash(eventData, lastHash)
@@ -362,7 +439,17 @@ func (s *Server) addStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Also record in engine for dual-path consistency
+	stockItem := core.StockItem{
+		ProductID: productID,
+		Quantity:  req.Quantity,
+	}
+	if engErr := s.engine.ApplyStock(stockItem); engErr != nil {
+		slog.Warn("failed to record stock in engine", "error", engErr)
+	}
+
 	slog.Info("stock added", "product", productID, "qty", req.Quantity, "shop", shopID)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "stock_added", "product", productID, r.RemoteAddr, r.UserAgent(), map[string]interface{}{"quantity": req.Quantity, "cost": req.Cost})
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
 		"added":   req.Quantity,
@@ -428,16 +515,22 @@ func (s *Server) recordSale(w http.ResponseWriter, r *http.Request) {
 		})
 
 		var lastHash string
-		_ = tx.QueryRowContext(r.Context(),
+		err = tx.QueryRowContext(r.Context(),
 			`SELECT COALESCE(event_hash, '') FROM events WHERE shop_id = $1 ORDER BY event_seq DESC LIMIT 1`,
 			shopID,
 		).Scan(&lastHash)
+		if err != nil {
+			slog.Warn("failed to get last hash for sale event", "error", err)
+		}
 
 		var seq int64
-		_ = tx.QueryRowContext(r.Context(),
+		err = tx.QueryRowContext(r.Context(),
 			`SELECT COALESCE(MAX(event_seq), 0) FROM events WHERE shop_id = $1`,
 			shopID,
 		).Scan(&seq)
+		if err != nil {
+			slog.Warn("failed to get sequence number for sale event", "error", err)
+		}
 		seq++
 
 		eventHash := computeEventHash(eventData, lastHash)
@@ -452,7 +545,7 @@ func (s *Server) recordSale(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		slog.Error("record sale failed", "error", err)
-		if err.Error()[:20] == "insufficient stock" {
+		if strings.HasPrefix(err.Error(), "insufficient stock") {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -460,7 +553,21 @@ func (s *Server) recordSale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Also record in engine for dual-path consistency
+	sale := core.Sale{
+		ProductID: req.ProductID,
+		Quantity:  req.Quantity,
+		Price:     req.Price,
+		WorkerID:  req.WorkerID,
+		Payment:   core.PaymentMethod(req.Payment),
+		TimeStamp: time.Now(),
+	}
+	if engErr := s.engine.RecordSale(sale); engErr != nil {
+		slog.Warn("failed to record sale in engine", "error", engErr)
+	}
+
 	slog.Info("sale recorded", "product", req.ProductID, "qty", req.Quantity, "total", req.Price*req.Quantity, "shop", shopID)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "sale_recorded", "sale", "", r.RemoteAddr, r.UserAgent(), map[string]interface{}{"product": req.ProductID, "quantity": req.Quantity, "total": req.Price * req.Quantity, "payment": req.Payment})
 
 	respondCreated(w, map[string]interface{}{
 		"status":   "ok",
@@ -473,16 +580,45 @@ func (s *Server) recordSale(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listSales(w http.ResponseWriter, r *http.Request) {
 	shopID := GetShopID(r)
 
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 50
 	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	workerID := r.URL.Query().Get("worker_id")
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	query := `
 		SELECT id, event_seq, event_data, created_at
 		FROM events WHERE shop_id = $1 AND event_type = 'sale'
-		ORDER BY event_seq DESC LIMIT $2
-	`, shopID, limit)
+	`
+	args := []interface{}{shopID}
+	argCount := 1
+
+	if from != "" {
+		argCount++
+		query += fmt.Sprintf(" AND created_at >= $%d", argCount)
+		args = append(args, from)
+	}
+	if to != "" {
+		argCount++
+		query += fmt.Sprintf(" AND created_at <= $%d", argCount)
+		args = append(args, to)
+	}
+	if workerID != "" {
+		argCount++
+		query += fmt.Sprintf(" AND event_data->>'worker_id' = $%d", argCount)
+		args = append(args, workerID)
+	}
+
+	query += fmt.Sprintf(" ORDER BY event_seq DESC LIMIT $%d OFFSET $%d", argCount+1, argCount+2)
+	args = append(args, limit, (page-1)*limit)
+
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -516,16 +652,125 @@ func (s *Server) listSales(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getReceipt(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{"status": "receipt generation coming soon"})
+	eventID := chi.URLParam(r, "id")
+	shopID := GetShopID(r)
+
+	var seq int64
+	var dataStr string
+	var createdAt time.Time
+	var hash string
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT event_seq, event_data, created_at, event_hash
+		FROM events WHERE shop_id = $1 AND (id::text = $2 OR event_seq::text = $2)
+	`, shopID, eventID).Scan(&seq, &dataStr, &createdAt, &hash)
+
+	if err == sql.ErrNoRows {
+		respondError(w, http.StatusNotFound, "receipt not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	var saleData map[string]interface{}
+	if err := json.Unmarshal([]byte(dataStr), &saleData); err != nil {
+		respondError(w, http.StatusInternalServerError, "parse event data")
+		return
+	}
+
+	productID, _ := saleData["product_id"].(string)
+	quantity, _ := saleData["quantity"].(float64)
+	price, _ := saleData["price"].(float64)
+	workerID, _ := saleData["worker_id"].(string)
+	paymentVal, _ := saleData["payment"].(float64)
+
+	paymentMethod := "Cash"
+	if paymentVal == 2 {
+		paymentMethod = "M-Pesa"
+	}
+
+	total := int64(price * quantity)
+
+	var productName string
+	s.db.QueryRowContext(r.Context(), `SELECT name FROM products WHERE id = $1`, productID).Scan(&productName)
+	if productName == "" {
+		productName = productID
+	}
+
+	var workerName string
+	s.db.QueryRowContext(r.Context(), `SELECT name FROM workers WHERE id = $1`, workerID).Scan(&workerName)
+	if workerName == "" {
+		workerName = workerID
+	}
+
+	var shopName, currency string
+	s.db.QueryRowContext(r.Context(), `SELECT name, currency FROM shops WHERE id = $1`, shopID).Scan(&shopName, &currency)
+	if shopName == "" {
+		shopName = "Shop"
+	}
+	if currency == "" {
+		currency = "KES"
+	}
+
+	receipt := receiptPkg.Receipt{
+		ShopName:  shopName,
+		ReceiptNo: fmt.Sprintf("RCP-%d-%d", seq, createdAt.Unix()),
+		Date:      createdAt,
+		Items: []receiptPkg.ReceiptItem{
+			{
+				Name:     productName,
+				Quantity: int64(quantity),
+				Price:    int64(price),
+				Total:    total,
+			},
+		},
+		Subtotal: total,
+		Total:    total,
+		Payment:  paymentMethod,
+		Worker:   workerName,
+		Currency: currency,
+	}
+
+	pdf, err := receiptPkg.GeneratePDF(receipt)
+	if err != nil {
+		slog.Error("receipt PDF generation failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to generate receipt")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=receipt-%d.pdf", seq))
+	w.Write(pdf)
 }
 
 func (s *Server) listWorkers(w http.ResponseWriter, r *http.Request) {
 	shopID := GetShopID(r)
 
-	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, name, pin IS NOT NULL as has_pin, active, created_at
-		FROM workers WHERE shop_id = $1 ORDER BY name
-	`, shopID)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 {
+		limit = 50
+	}
+	search := r.URL.Query().Get("search")
+
+	query := `SELECT id, name, pin IS NOT NULL as has_pin, active, created_at FROM workers WHERE shop_id = $1`
+	args := []interface{}{shopID}
+	argCount := 1
+
+	if search != "" {
+		argCount++
+		query += fmt.Sprintf(" AND name ILIKE $%d", argCount)
+		args = append(args, "%"+search+"%")
+	}
+
+	query += fmt.Sprintf(" ORDER BY name LIMIT $%d OFFSET $%d", argCount+1, argCount+2)
+	args = append(args, limit, (page-1)*limit)
+
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -574,10 +819,20 @@ func (s *Server) createWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var pinHash string
+	if req.PIN != "" {
+		var err error
+		pinHash, err = auth.HashPassword(req.PIN)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to hash PIN")
+			return
+		}
+	}
+
 	var id string
 	err := s.db.QueryRowContext(r.Context(), `
 		INSERT INTO workers (shop_id, name, pin) VALUES ($1, $2, $3) RETURNING id
-	`, shopID, req.Name, req.PIN).Scan(&id)
+	`, shopID, req.Name, pinHash).Scan(&id)
 
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to create worker")
@@ -585,6 +840,7 @@ func (s *Server) createWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("worker created", "id", id, "name", req.Name, "shop", shopID)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "worker_created", "worker", id, r.RemoteAddr, r.UserAgent(), map[string]string{"name": req.Name})
 	respondCreated(w, map[string]string{"id": id, "name": req.Name})
 }
 
@@ -611,6 +867,7 @@ func (s *Server) openSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("session opened", "id", id, "worker", req.WorkerID, "shop", shopID)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "session_opened", "session", id, r.RemoteAddr, r.UserAgent(), map[string]string{"worker_id": req.WorkerID})
 	respondCreated(w, map[string]string{"id": id, "worker_id": req.WorkerID})
 }
 
@@ -639,6 +896,7 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("session closed", "id", sessionID, "shop", shopID)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "session_closed", "session", sessionID, r.RemoteAddr, r.UserAgent(), nil)
 	respondJSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
 
@@ -721,16 +979,22 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 	})
 
 	var lastHash string
-	_ = s.db.QueryRowContext(r.Context(),
+	err = s.db.QueryRowContext(r.Context(),
 		`SELECT COALESCE(event_hash, '') FROM events WHERE shop_id = $1 ORDER BY event_seq DESC LIMIT 1`,
 		shopID,
 	).Scan(&lastHash)
+	if err != nil {
+		slog.Warn("failed to get last hash for reconciliation event", "error", err)
+	}
 
 	var seq int64
-	_ = s.db.QueryRowContext(r.Context(),
+	err = s.db.QueryRowContext(r.Context(),
 		`SELECT COALESCE(MAX(event_seq), 0) FROM events WHERE shop_id = $1`,
 		shopID,
 	).Scan(&seq)
+	if err != nil {
+		slog.Warn("failed to get sequence number for reconciliation event", "error", err)
+	}
 	seq++
 
 	eventHash := computeEventHash(eventData, lastHash)
@@ -744,6 +1008,15 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to record reconciliation")
 		return
 	}
+
+	if _, engErr := s.engine.Reconcile(req.WorkerID, req.DeclaredCash, req.DeclaredMpesa); engErr != nil {
+		slog.Warn("failed to record reconciliation in engine", "error", engErr)
+	}
+
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "reconciliation", "reconciliation", "", r.RemoteAddr, r.UserAgent(), map[string]interface{}{
+		"worker_id": req.WorkerID, "declared_cash": req.DeclaredCash, "declared_mpesa": req.DeclaredMpesa,
+		"expected_cash": expectedCash, "expected_mpesa": expectedMpesa,
+	})
 
 	respondCreated(w, map[string]interface{}{
 		"status":         "ok",
@@ -912,7 +1185,128 @@ func (s *Server) ledgerReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{"status": "csv export coming soon"})
+	shopID := GetShopID(r)
+	exportType := r.URL.Query().Get("type")
+	if exportType == "" {
+		exportType = "sales"
+	}
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+
+	switch exportType {
+	case "sales":
+		writer.Write([]string{"seq", "product_id", "quantity", "price", "total", "worker_id", "payment", "created_at"})
+		rows, err := s.db.QueryContext(r.Context(), `
+			SELECT event_seq, event_data, created_at
+			FROM events WHERE shop_id = $1 AND event_type = 'sale'
+			ORDER BY event_seq ASC
+		`, shopID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var seq int64
+			var dataStr string
+			var createdAt time.Time
+			if err := rows.Scan(&seq, &dataStr, &createdAt); err != nil {
+				continue
+			}
+			var saleData map[string]interface{}
+			if err := json.Unmarshal([]byte(dataStr), &saleData); err != nil {
+				continue
+			}
+			productID, _ := saleData["product_id"].(string)
+			quantity, _ := saleData["quantity"].(float64)
+			price, _ := saleData["price"].(float64)
+			workerID, _ := saleData["worker_id"].(string)
+			payment, _ := saleData["payment"].(float64)
+			total := price * quantity
+			paymentStr := "cash"
+			if payment == 2 {
+				paymentStr = "mpesa"
+			}
+			writer.Write([]string{
+				fmt.Sprintf("%d", seq),
+				productID,
+				fmt.Sprintf("%.0f", quantity),
+				fmt.Sprintf("%.0f", price),
+				fmt.Sprintf("%.0f", total),
+				workerID,
+				paymentStr,
+				createdAt.Format(time.RFC3339),
+			})
+		}
+
+	case "inventory":
+		writer.Write([]string{"id", "name", "sku", "category", "cost_price", "sell_price", "stock_qty", "min_stock", "active"})
+		rows, err := s.db.QueryContext(r.Context(), `
+			SELECT id, name, sku, category, cost_price, sell_price, stock_qty, min_stock, active
+			FROM products WHERE shop_id = $1 ORDER BY name
+		`, shopID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id, name, sku, category string
+			var costPrice, sellPrice, stockQty, minStock int64
+			var active bool
+			if err := rows.Scan(&id, &name, &sku, &category, &costPrice, &sellPrice, &stockQty, &minStock, &active); err != nil {
+				continue
+			}
+			activeStr := "true"
+			if !active {
+				activeStr = "false"
+			}
+			writer.Write([]string{id, name, sku, category, fmt.Sprintf("%d", costPrice), fmt.Sprintf("%d", sellPrice), fmt.Sprintf("%d", stockQty), fmt.Sprintf("%d", minStock), activeStr})
+		}
+
+	case "workers":
+		writer.Write([]string{"id", "name", "active", "created_at"})
+		rows, err := s.db.QueryContext(r.Context(), `
+			SELECT id, name, active, created_at FROM workers WHERE shop_id = $1 ORDER BY name
+		`, shopID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id, name string
+			var active bool
+			var createdAt time.Time
+			if err := rows.Scan(&id, &name, &active, &createdAt); err != nil {
+				continue
+			}
+			activeStr := "true"
+			if !active {
+				activeStr = "false"
+			}
+			writer.Write([]string{id, name, activeStr, createdAt.Format(time.RFC3339)})
+		}
+
+	default:
+		respondError(w, http.StatusBadRequest, "unknown export type: "+exportType)
+		return
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		slog.Error("CSV write error", "error", err)
+		respondError(w, http.StatusInternalServerError, "CSV generation failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s-%s.csv", exportType, time.Now().Format("2006-01-02")))
+	w.Write(buf.Bytes())
 }
 
 func (s *Server) ghostReport(w http.ResponseWriter, r *http.Request) {
@@ -1072,6 +1466,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user created", "id", id, "email", req.Email, "role", req.Role)
+	recordAudit(s.db.DB, r.Context(), shopID, GetUserID(r), "user_created", "user", id, r.RemoteAddr, r.UserAgent(), map[string]string{"email": req.Email, "role": req.Role})
 	respondCreated(w, map[string]string{"id": id, "email": req.Email, "role": req.Role})
 }
 
@@ -1114,8 +1509,227 @@ func (s *Server) disableUser(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]interface{}{"status": "disabled", "affected": rows})
 }
 
+func (s *Server) mpesaPay(w http.ResponseWriter, r *http.Request) {
+	shopID := GetShopID(r)
+
+	var req struct {
+		PhoneNumber string `json:"phone_number"`
+		ProductID   string `json:"product_id"`
+		Quantity    int64  `json:"quantity"`
+		Price       int64  `json:"price"`
+		WorkerID    string `json:"worker_id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.PhoneNumber == "" || req.ProductID == "" || req.Quantity <= 0 || req.Price < 0 || req.WorkerID == "" {
+		respondError(w, http.StatusBadRequest, "phone_number, product_id, quantity (>0), price (>=0), and worker_id are required")
+		return
+	}
+
+	if s.mpesaClient == nil {
+		respondError(w, http.StatusServiceUnavailable, "M-Pesa not configured")
+		return
+	}
+
+	total := req.Price * req.Quantity
+	accountRef := mpesaPkg.GenerateAccountRef()
+
+	resp, err := s.mpesaClient.STKPush(mpesaPkg.STKPushRequest{
+		PhoneNumber: req.PhoneNumber,
+		Amount:      total,
+		AccountRef:  accountRef,
+		Description: fmt.Sprintf("POS Purchase - %s x%d", req.ProductID, req.Quantity),
+	})
+	if err != nil {
+		slog.Error("STK push failed", "error", err)
+		respondError(w, http.StatusPaymentRequired, "Payment initiation failed. Please try again.")
+		return
+	}
+
+	if resp.ResponseCode != "0" {
+		slog.Error("STK push returned error", "code", resp.ResponseCode, "desc", resp.ResponseDesc)
+		respondError(w, http.StatusPaymentRequired, resp.ResponseDesc)
+		return
+	}
+
+	slog.Info("M-Pesa STK push initiated",
+		"checkout_id", resp.CheckoutRequestID,
+		"amount", total,
+		"phone", req.PhoneNumber,
+		"shop", shopID,
+	)
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success":     true,
+		"checkout_id": resp.CheckoutRequestID,
+		"message":     "Payment initiated. Check your phone for STK push.",
+		"amount":      total,
+	})
+}
+
+func (s *Server) mpesaCallback(w http.ResponseWriter, r *http.Request) {
+	var callback struct {
+		Body struct {
+			STKCallback struct {
+				ResultCode       int    `json:"ResultCode"`
+				ResultDesc       string `json:"ResultDesc"`
+				CallbackMetadata struct {
+					Item []struct {
+						Name  string      `json:"Name"`
+						Value interface{} `json:"Value"`
+					} `json:"Item"`
+				} `json:"CallbackMetadata"`
+			} `json:"stkCallback"`
+		} `json:"Body"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&callback); err != nil {
+		slog.Error("parse M-Pesa callback failed", "error", err)
+		http.Error(w, "invalid callback", http.StatusBadRequest)
+		return
+	}
+
+	resultCode := callback.Body.STKCallback.ResultCode
+	success := resultCode == 0
+
+	var mpesaReceipt, phoneNumber, transactionID string
+	var amount float64
+
+	for _, item := range callback.Body.STKCallback.CallbackMetadata.Item {
+		switch item.Name {
+		case "MpesaReceiptNumber":
+			if v, ok := item.Value.(string); ok {
+				mpesaReceipt = v
+			}
+		case "PhoneNumber":
+			if v, ok := item.Value.(float64); ok {
+				phoneNumber = fmt.Sprintf("%.0f", v)
+			}
+		case "Amount":
+			if v, ok := item.Value.(float64); ok {
+				amount = v
+			}
+		case "TransactionDate":
+		case "TransactionId":
+			if v, ok := item.Value.(string); ok {
+				transactionID = v
+			}
+		}
+	}
+
+	if !success {
+		slog.Info("M-Pesa payment cancelled or failed",
+			"code", resultCode,
+			"desc", callback.Body.STKCallback.ResultDesc,
+		)
+		respondJSON(w, http.StatusOK, map[string]string{"status": "failed"})
+		return
+	}
+
+	slog.Info("M-Pesa payment successful",
+		"receipt", mpesaReceipt,
+		"amount", amount,
+		"phone", phoneNumber,
+	)
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status":         "success",
+		"receipt":        mpesaReceipt,
+		"transaction_id": transactionID,
+	})
+}
+
 func computeEventHash(data []byte, previousHash string) string {
 	content := string(data) + previousHash
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+func recordAudit(db *sql.DB, ctx context.Context, shopID, userID, action, entityType, entityID, ipAddress, userAgent string, details interface{}) {
+	detailsJSON, _ := json.Marshal(details)
+	_, _ = db.ExecContext(ctx, `
+		INSERT INTO audit_log (shop_id, user_id, action, details, ip_address, user_agent)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, shopID, userID, action, string(detailsJSON), ipAddress, userAgent)
+}
+
+func (s *Server) sendDailyReport(shopID string) {
+	var shopName, ownerEmail, currency string
+	err := s.db.QueryRowContext(context.Background(), `SELECT name, owner_email, currency FROM shops WHERE id = $1`, shopID).Scan(&shopName, &ownerEmail, &currency)
+	if err != nil {
+		return
+	}
+
+	var totalSales, totalCash, totalMpesa int64
+	var saleCount int
+	_ = s.db.QueryRowContext(context.Background(), `
+		SELECT COALESCE(SUM((event_data->>'price')::bigint * (event_data->>'quantity')::bigint), 0),
+			COUNT(*)
+		FROM events WHERE shop_id = $1 AND event_type = 'sale' AND created_at >= CURRENT_DATE
+	`, shopID).Scan(&totalSales, &saleCount)
+	_ = s.db.QueryRowContext(context.Background(), `
+		SELECT COALESCE(SUM((event_data->>'price')::bigint * (event_data->>'quantity')::bigint), 0)
+		FROM events WHERE shop_id = $1 AND event_type = 'sale' AND event_data->>'payment' = '1' AND created_at >= CURRENT_DATE
+	`, shopID).Scan(&totalCash)
+	totalMpesa = totalSales - totalCash
+
+	rows, err := s.db.QueryContext(context.Background(), `
+		SELECT w.name, COUNT(e.id), COALESCE(SUM((e.event_data->>'price')::bigint * (e.event_data->>'quantity')::bigint), 0)
+		FROM events e JOIN workers w ON (e.event_data->>'worker_id')::uuid = w.id
+		WHERE e.shop_id = $1 AND e.event_type = 'sale' AND e.created_at >= CURRENT_DATE
+		GROUP BY w.name
+	`, shopID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var workerStats []email.WorkerStat
+	for rows.Next() {
+		var name string
+		var sales int
+		var total int64
+		if err := rows.Scan(&name, &sales, &total); err != nil {
+			continue
+		}
+		workerStats = append(workerStats, email.WorkerStat{Name: name, Sales: sales, Total: total})
+	}
+
+	report := email.ReportEmail{
+		To:          ownerEmail,
+		ShopName:    shopName,
+		Date:        time.Now().Format("2006-01-02"),
+		TotalSales:  totalSales,
+		TotalCash:   totalCash,
+		TotalMpesa:  totalMpesa,
+		SaleCount:   saleCount,
+		Currency:    currency,
+		WorkerStats: workerStats,
+	}
+
+	emailCfg := email.Config{
+		SMTPHost:  s.cfg.Email.SMTPHost,
+		SMTPPort:  s.cfg.Email.SMTPPort,
+		SMTPUser:  s.cfg.Email.SMTPUser,
+		SMTPPass:  s.cfg.Email.SMTPPass,
+		FromEmail: s.cfg.Email.FromEmail,
+		FromName:  s.cfg.Email.FromName,
+	}
+
+	if err := email.SendReport(emailCfg, report); err != nil {
+		slog.Error("failed to send daily report", "shop", shopID, "error", err)
+	}
+}
+
+func (s *Server) sendReportEmail(w http.ResponseWriter, r *http.Request) {
+	shopID := GetShopID(r)
+	userID := GetUserID(r)
+
+	go s.sendDailyReport(shopID)
+
+	recordAudit(s.db.DB, r.Context(), shopID, userID, "report_email_sent", "report", "", r.RemoteAddr, r.UserAgent(), nil)
+	respondJSON(w, http.StatusOK, map[string]string{"status": "report email queued"})
 }

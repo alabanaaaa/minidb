@@ -1,0 +1,123 @@
+{{define "title"}}Settings — Mini-Database{{end}}
+{{define "topbar-actions"}}{{end}}
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Shop Information</h3></div>
+        <div class="card-body padded">
+            <form method="POST" action="/settings/shop">
+                <div class="form-group">
+                    <label class="form-label">Shop Name</label>
+                    <input class="form-input" type="text" name="shop_name" value="{{.ShopName}}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Currency</label>
+                    <select class="form-select" name="currency">
+                        <option value="KES" {{if eq .Currency "KES"}}selected{{end}}>KES — Kenyan Shilling</option>
+                        <option value="USD" {{if eq .Currency "USD"}}selected{{end}}>USD — US Dollar</option>
+                        <option value="TZS" {{if eq .Currency "TZS"}}selected{{end}}>TZS — Tanzanian Shilling</option>
+                        <option value="UGX" {{if eq .Currency "UGX"}}selected{{end}}>UGX — Ugandan Shilling</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tax Rate (%)</label>
+                    <input class="form-input" type="number" name="tax_rate" value="{{.TaxRate}}" min="0" max="100" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Shop Address</label>
+                    <input class="form-input" type="text" name="shop_address" value="{{.ShopAddress}}" placeholder="e.g. Moi Avenue, Nairobi">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Phone Number</label>
+                    <input class="form-input" type="text" name="shop_phone" value="{{.ShopPhone}}" placeholder="e.g. +254 712 345 678">
+                </div>
+                <button type="submit" class="btn btn-primary">Save Shop Settings</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">M-Pesa Configuration</h3></div>
+        <div class="card-body padded">
+            <form method="POST" action="/settings/mpesa">
+                <div class="form-group">
+                    <label class="form-label">Consumer Key</label>
+                    <input class="form-input" type="text" name="mpesa_key" value="{{.MpesaKey}}" placeholder="Daraja consumer key">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Consumer Secret</label>
+                    <input class="form-input" type="password" name="mpesa_secret" value="{{.MpesaSecret}}" placeholder="Daraja consumer secret">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Shortcode / Till Number</label>
+                    <input class="form-input" type="text" name="mpesa_shortcode" value="{{.MpesaShortcode}}" placeholder="e.g. 174379">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Passkey</label>
+                    <input class="form-input" type="password" name="mpesa_passkey" value="{{.MpesaPasskey}}" placeholder="Daraja passkey">
+                </div>
+                <button type="submit" class="btn btn-primary">Save M-Pesa Settings</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Email Reports</h3></div>
+        <div class="card-body padded">
+            <form method="POST" action="/settings/email">
+                <div class="form-group">
+                    <label class="form-label">SMTP Host</label>
+                    <input class="form-input" type="text" name="smtp_host" value="{{.SMTPHost}}" placeholder="e.g. smtp.gmail.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">SMTP Port</label>
+                    <input class="form-input" type="number" name="smtp_port" value="{{.SMTPPort}}" placeholder="587">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">SMTP Username</label>
+                    <input class="form-input" type="text" name="smtp_user" value="{{.SMTPUser}}" placeholder="you@gmail.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">SMTP Password</label>
+                    <input class="form-input" type="password" name="smtp_pass" value="{{.SMTPPass}}" placeholder="App password">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Report Email Address</label>
+                    <input class="form-input" type="email" name="report_email" value="{{.ReportEmail}}" placeholder="owner@shop.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="daily_report" {{if .DailyReport}}checked{{end}}>
+                        Send daily sales report at end of day
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save Email Settings</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Export Data</h3></div>
+        <div class="card-body padded">
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px">Download your data as CSV for accounting or analysis.</p>
+            <div style="display:flex;flex-direction:column;gap:10px">
+                <a href="/export/sales" class="btn btn-ghost" style="justify-content:center">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export Sales (CSV)
+                </a>
+                <a href="/export/inventory" class="btn btn-ghost" style="justify-content:center">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export Inventory (CSV)
+                </a>
+                <a href="/export/workers" class="btn btn-ghost" style="justify-content:center">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export Workers (CSV)
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}

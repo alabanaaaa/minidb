@@ -13,6 +13,26 @@ type Config struct {
 	JWTSecret   string
 	LogLevel    string
 	Env         string
+	Mpesa       MpesaConfig
+	Email       EmailConfig
+}
+
+type MpesaConfig struct {
+	ConsumerKey    string
+	ConsumerSecret string
+	ShortCode      string
+	Passkey        string
+	CallbackURL    string
+	APIVersion     string
+}
+
+type EmailConfig struct {
+	SMTPHost  string
+	SMTPPort  int
+	SMTPUser  string
+	SMTPPass  string
+	FromEmail string
+	FromName  string
 }
 
 func Load() (*Config, error) {
@@ -22,6 +42,22 @@ func Load() (*Config, error) {
 		JWTSecret:   getEnv("JWT_SECRET", "change-me-in-production"),
 		LogLevel:    strings.ToLower(getEnv("LOG_LEVEL", "info")),
 		Env:         getEnv("APP_ENV", "development"),
+		Mpesa: MpesaConfig{
+			ConsumerKey:    getEnv("MPESA_CONSUMER_KEY", ""),
+			ConsumerSecret: getEnv("MPESA_CONSUMER_SECRET", ""),
+			ShortCode:      getEnv("MPESA_SHORTCODE", "174379"),
+			Passkey:        getEnv("MPESA_PASSKEY", ""),
+			CallbackURL:    getEnv("MPESA_CALLBACK_URL", "http://localhost:8080/mpesa/callback"),
+			APIVersion:     getEnv("MPESA_API_VERSION", "v3"),
+		},
+		Email: EmailConfig{
+			SMTPHost:  getEnv("SMTP_HOST", ""),
+			SMTPPort:  getEnvInt("SMTP_PORT", 587),
+			SMTPUser:  getEnv("SMTP_USER", ""),
+			SMTPPass:  getEnv("SMTP_PASS", ""),
+			FromEmail: getEnv("EMAIL_FROM", ""),
+			FromName:  getEnv("EMAIL_FROM_NAME", "Mini-Database POS"),
+		},
 	}
 
 	if cfg.JWTSecret == "change-me-in-production" && cfg.Env == "production" {

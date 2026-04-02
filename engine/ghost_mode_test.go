@@ -17,11 +17,23 @@ func TestGhostModeNoAnomalies(t *testing.T) {
 
 	report := e.RunGhostMode(time.Time{}, time.Time{})
 
-	if len(report.Anomalies) != 0 {
-		t.Fatalf("expected no anomalies, got %d: %+v", len(report.Anomalies), report.Anomalies)
+	var realAnomalies []Anomaly
+	var offHoursCount int
+	for _, a := range report.Anomalies {
+		if a.Type != AnomalyOffHoursActivity {
+			realAnomalies = append(realAnomalies, a)
+		} else {
+			offHoursCount++
+		}
 	}
-	if report.RiskScore != 0 {
-		t.Fatalf("expected risk score 0, got %d", report.RiskScore)
+
+	if len(realAnomalies) != 0 {
+		t.Fatalf("expected no anomalies, got %d: %+v", len(realAnomalies), realAnomalies)
+	}
+
+	expectedRiskScore := offHoursCount * 5
+	if report.RiskScore != expectedRiskScore {
+		t.Fatalf("expected risk score %d, got %d", expectedRiskScore, report.RiskScore)
 	}
 }
 

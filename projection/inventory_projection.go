@@ -1,6 +1,8 @@
 package projection
 
-import "mini-database/storage"
+import (
+	"encoding/json"
+)
 
 type InventoryProjection struct {
 	stock map[string]int
@@ -16,16 +18,31 @@ func (p *InventoryProjection) Name() string {
 	return "inventory"
 }
 
-func (p *InventoryProjection) Apply(event storage.Event) error {
+func (p *InventoryProjection) Handle(event Event) error {
+	return p.Apply(event)
+}
 
+func (p *InventoryProjection) Apply(event Event) error {
 	switch event.Type {
+	case "stock":
+		var payload struct {
+			ProductID string `json:"product_id"`
+			Quantity  int    `json:"quantity"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		p.stock[payload.ProductID] += payload.Quantity
 
-	case storage.EventStock:
-		// decode payload and add stock
-
-	case storage.EventSale:
-		// decode payload and reduce stock
-
+	case "sale":
+		var payload struct {
+			ProductID string `json:"product_id"`
+			Quantity  int    `json:"quantity"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		p.stock[payload.ProductID] -= payload.Quantity
 	}
 
 	return nil

@@ -81,9 +81,9 @@ func NewEngineWithDB(dbPath string) (*Engine, error) {
 		projectionManager: projection.NewManager(),
 	}
 
-	// register persistent projections (example: sales projection)
+	// register persistent projections
 	engine.projectionManager.Register(
-		projection.NewSalesProjection(database),
+		projection.NewSalesProjection(),
 	)
 
 	if err := engine.loadEvents(); err != nil {

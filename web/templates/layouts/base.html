@@ -1,679 +1,831 @@
 <!DOCTYPE html>
-<html lang="en" class="minidb">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{block "title" .}}Mini-Database{{end}}</title>
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <meta name="theme-color" content="#82b440">
+    <link rel="manifest" href="/static/manifest.json">
+    <title>{{.Title}} — Mini-Database</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
         :root {
-            --bg: #0a0a0b;
-            --bg-elevated: #111113;
-            --bg-card: #161618;
-            --bg-hover: #1c1c1f;
-            --border: #222225;
-            --border-light: #2a2a2e;
-            --text: #e4e4e7;
-            --text-muted: #71717a;
-            --text-dim: #52525b;
-            --accent: #a78bfa;
-            --accent-dim: #7c3aed;
-            --accent-glow: rgba(167, 139, 250, 0.15);
-            --green: #34d399;
-            --green-dim: rgba(52, 211, 153, 0.1);
-            --red: #f87171;
-            --red-dim: rgba(248, 113, 113, 0.1);
-            --amber: #fbbf24;
-            --amber-dim: rgba(251, 191, 36, 0.1);
-            --radius: 10px;
-            --radius-lg: 14px;
-            --font: 'Inter', -apple-system, sans-serif;
-            --mono: 'JetBrains Mono', monospace;
+            --white: #ffffff; --bg: #f5f6f8; --card: #ffffff; --border: #e8e9eb;
+            --text: #1a1a2e; --text-secondary: #6b7280; --text-muted: #9ca3af;
+            --green: #82b440; --green-dark: #6a9a2e; --green-light: #e8f5d8;
+            --red: #ef4444; --red-light: #fef2f2; --amber: #f59e0b; --amber-light: #fffbeb;
+            --blue: #3b82f6; --blue-light: #eff6ff;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05); --shadow: 0 1px 3px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.07); --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
+            --radius: 8px; --radius-lg: 12px;
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --sidebar-width: 260px;
+            --sidebar-collapsed: 0px;
         }
-
         html { font-size: 15px; }
-        body {
-            font-family: var(--font);
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            -webkit-font-smoothing: antialiased;
-            line-height: 1.6;
-        }
-
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
+        body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; line-height: 1.5; }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+        
         /* Layout */
         .app { display: flex; min-height: 100vh; }
-
-        .sidebar {
-            width: 240px;
-            background: var(--bg-elevated);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            position: fixed;
-            top: 0;
-            left: 0;
-            bottom: 0;
-            z-index: 50;
+        
+        /* Sidebar */
+        .sidebar { 
+            width: var(--sidebar-width); 
+            background: var(--white); 
+            border-right: 1px solid var(--border); 
+            display: flex; 
+            flex-direction: column; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            bottom: 0; 
+            z-index: 50; 
+            transition: transform 0.3s ease, width 0.3s ease;
+            transform: translateX(-100%);
         }
-
-        .sidebar-brand {
-            padding: 24px 20px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .sidebar-brand h1 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            color: var(--text);
-        }
-
-        .sidebar-brand span {
-            font-size: 0.7rem;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            display: block;
-            margin-top: 2px;
-        }
-
-        .sidebar-nav { flex: 1; padding: 16px 12px; }
-
-        .nav-section {
-            font-size: 0.65rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-dim);
-            padding: 8px 8px 6px;
-            margin-top: 8px;
-        }
-
-        .nav-link {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 9px 12px;
-            border-radius: 8px;
-            color: var(--text-muted);
-            text-decoration: none;
-            font-size: 0.875rem;
-            font-weight: 400;
-            transition: all 0.15s ease;
-            margin-bottom: 2px;
-        }
-
-        .nav-link:hover {
-            background: var(--bg-hover);
-            color: var(--text);
-        }
-
-        .nav-link.active {
-            background: var(--accent-glow);
-            color: var(--accent);
-            font-weight: 500;
-        }
-
+        .sidebar.open { transform: translateX(0); }
+        .sidebar-brand { padding: 20px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+        .sidebar-brand-icon svg { width: 18px; height: 18px; color: white; }
+        .sidebar-brand h1 { font-size: 1rem; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+        .sidebar-nav { flex: 1; padding: 16px 12px; overflow-y: auto; }
+        .nav-section { font-size: 0.625rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); padding: 8px 8px 4px; margin-top: 4px; }
+        .nav-link { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-size: 0.875rem; font-weight: 400; transition: all 0.15s ease; margin-bottom: 2px; }
+        .nav-link:hover { background: var(--bg); color: var(--text); }
+        .nav-link.active { background: var(--green-light); color: var(--green-dark); font-weight: 500; }
         .nav-link svg { width: 18px; height: 18px; flex-shrink: 0; }
-
-        .sidebar-footer {
-            padding: 16px 12px;
-            border-top: 1px solid var(--border);
-        }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 10px;
-            border-radius: 8px;
-        }
-
-        .user-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--accent-dim);
-            color: var(--accent);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
+        .sidebar-footer { padding: 16px 12px; border-top: 1px solid var(--border); }
+        .user-info { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+        .user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--green-light); color: var(--green-dark); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 600; flex-shrink: 0; }
         .user-details { flex: 1; min-width: 0; }
         .user-name { font-size: 0.8rem; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .user-role { font-size: 0.65rem; color: var(--text-dim); text-transform: capitalize; }
-
-        .main { flex: 1; margin-left: 240px; }
-
-        .topbar {
-            height: 56px;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 28px;
-            background: var(--bg-elevated);
-            position: sticky;
-            top: 0;
-            z-index: 40;
-        }
-
-        .topbar-title {
-            font-size: 0.95rem;
-            font-weight: 500;
-            color: var(--text);
-            letter-spacing: -0.01em;
-        }
-
-        .topbar-actions { display: flex; align-items: center; gap: 12px; }
-
-        .content { padding: 28px; }
-
-        /* Cards */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 20px;
-        }
-
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-        }
-
-        .card-title {
-            font-size: 0.8rem;
-            font-weight: 500;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        /* Stat cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 20px;
-            transition: border-color 0.2s ease;
-        }
-
-        .stat-card:hover { border-color: var(--border-light); }
-
-        .stat-label {
-            font-size: 0.75rem;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-bottom: 8px;
-        }
-
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 600;
-            letter-spacing: -0.03em;
-            color: var(--text);
-            font-variant-numeric: tabular-nums;
-        }
-
-        .stat-change {
-            font-size: 0.75rem;
-            margin-top: 4px;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .stat-change.up { color: var(--green); }
-        .stat-change.down { color: var(--red); }
-
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            font-family: var(--font);
-            border: none;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-decoration: none;
-        }
-
-        .btn-primary {
-            background: var(--accent-dim);
-            color: var(--accent);
-        }
-
-        .btn-primary:hover {
-            background: var(--accent);
-            color: var(--bg);
-        }
-
-        .btn-ghost {
-            background: transparent;
-            color: var(--text-muted);
-            border: 1px solid var(--border);
-        }
-
-        .btn-ghost:hover {
-            background: var(--bg-hover);
-            color: var(--text);
-        }
-
-        .btn-danger {
-            background: var(--red-dim);
-            color: var(--red);
-        }
-
-        .btn-danger:hover {
-            background: var(--red);
-            color: var(--bg);
-        }
-
-        .btn-sm { padding: 5px 10px; font-size: 0.75rem; }
-
-        /* Forms */
-        .form-group { margin-bottom: 16px; }
-
-        .form-label {
-            display: block;
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: var(--text-muted);
-            margin-bottom: 6px;
-        }
-
-        .form-input, .form-select {
-            width: 100%;
-            padding: 9px 12px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            font-size: 0.85rem;
-            font-family: var(--font);
-            transition: border-color 0.15s ease;
-            outline: none;
-        }
-
-        .form-input:focus, .form-select:focus {
-            border-color: var(--accent-dim);
-            box-shadow: 0 0 0 3px var(--accent-glow);
-        }
-
-        .form-input::placeholder { color: var(--text-dim); }
-
-        /* Tables */
-        .table-wrap { overflow-x: auto; }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }
-
-        th {
-            text-align: left;
-            padding: 10px 14px;
-            font-size: 0.7rem;
-            font-weight: 500;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            border-bottom: 1px solid var(--border);
-        }
-
-        td {
-            padding: 12px 14px;
-            border-bottom: 1px solid var(--border);
-            color: var(--text);
-        }
-
-        tr:last-child td { border-bottom: none; }
-        tr:hover td { background: var(--bg-hover); }
-
-        /* Badges */
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-size: 0.7rem;
-            font-weight: 500;
-        }
-
-        .badge-green { background: var(--green-dim); color: var(--green); }
-        .badge-red { background: var(--red-dim); color: var(--red); }
-        .badge-amber { background: var(--amber-dim); color: var(--amber); }
-        .badge-purple { background: var(--accent-glow); color: var(--accent); }
-
-        /* Grid layouts */
+        .user-role { font-size: 0.65rem; color: var(--text-muted); text-transform: capitalize; }
+        
+        /* Main Content */
+        .main { flex: 1; margin-left: 0; display: flex; flex-direction: column; min-height: 100vh; transition: margin-left 0.3s ease; }
+        .main.sidebar-open { margin-left: var(--sidebar-width); }
+        
+        /* Top Navbar */
+        .topbar { height: 60px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--white); position: sticky; top: 0; z-index: 40; }
+        .topbar-left { display: flex; align-items: center; gap: 16px; }
+        .topbar-title { font-size: 1.1rem; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+        .topbar-right { display: flex; align-items: center; gap: 12px; }
+        
+        /* Logo Button */
+        .logo-btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--white); cursor: pointer; transition: all 0.15s ease; flex-shrink: 0; }
+        .logo-btn:hover { background: var(--green-light); border-color: var(--green); }
+        .logo-btn svg { width: 24px; height: 24px; transition: all 0.15s ease; }
+        
+        /* Quick Access Buttons */
+        .quick-nav { display: flex; align-items: center; gap: 8px; }
+        .quick-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 500; font-family: var(--font); border: 1px solid var(--border); background: var(--white); color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease; text-decoration: none; white-space: nowrap; }
+        .quick-btn:hover { background: var(--bg); color: var(--text); border-color: #d1d5db; }
+        .quick-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+        .quick-btn.primary { background: var(--green); color: white; border-color: var(--green); }
+        .quick-btn.primary:hover { background: var(--green-dark); border-color: var(--green-dark); }
+        
+        /* Overlay */
+        .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 45; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+        .sidebar-overlay.visible { opacity: 1; pointer-events: auto; }
+        
+        /* Content */
+        .content { padding: 24px; flex: 1; }
+        
+        /* Common Components */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; transition: all 0.2s ease; cursor: default; position: relative; }
+        .stat-card:hover { box-shadow: var(--shadow-md); border-color: #d1d5db; }
+        .stat-label { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+        .stat-value { font-size: 1.625rem; font-weight: 700; letter-spacing: -0.03em; color: var(--text); }
+        .stat-change { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+        .stat-tooltip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: var(--text); color: white; padding: 10px 14px; border-radius: 8px; font-size: 0.75rem; line-height: 1.5; white-space: nowrap; z-index: 100; box-shadow: var(--shadow-lg); }
+        .stat-tooltip::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-top-color: var(--text); }
+        .stat-card:hover .stat-tooltip { display: block; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: var(--radius); font-size: 0.8125rem; font-weight: 500; font-family: var(--font); border: none; cursor: pointer; transition: all 0.15s ease; text-decoration: none; }
+        .btn-primary { background: var(--green); color: white; } .btn-primary:hover { background: var(--green-dark); }
+        .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); } .btn-ghost:hover { background: var(--bg); color: var(--text); }
+        .btn-danger { background: var(--red); color: white; } .btn-danger:hover { background: #dc2626; }
+        .btn-sm { padding: 6px 12px; font-size: 0.75rem; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); }
+        .card-title { font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+        .card-body { padding: 0; } .card-body.padded { padding: 20px; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-
-        /* POS specific */
-        .pos-layout {
-            display: grid;
-            grid-template-columns: 1fr 380px;
-            gap: 20px;
-            height: calc(100vh - 112px);
-        }
-
-        .pos-products {
-            overflow-y: auto;
-            padding-right: 8px;
-        }
-
-        .product-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            gap: 12px;
-        }
-
-        .product-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 16px;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-align: center;
-        }
-
-        .product-card:hover {
-            border-color: var(--accent-dim);
-            transform: translateY(-1px);
-        }
-
-        .product-card.out-of-stock {
-            opacity: 0.4;
-            pointer-events: none;
-        }
-
-        .product-card-name {
-            font-size: 0.85rem;
-            font-weight: 500;
-            margin-bottom: 4px;
-        }
-
-        .product-card-price {
-            font-size: 0.8rem;
-            color: var(--accent);
-            font-weight: 500;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .product-card-stock {
-            font-size: 0.7rem;
-            color: var(--text-dim);
-            margin-top: 4px;
-        }
-
-        .pos-cart {
-            background: var(--bg-elevated);
-            border-left: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-        }
-
-        .cart-items { flex: 1; overflow-y: auto; padding: 16px; }
-
-        .cart-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--border);
-        }
-
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th { text-align: left; padding: 12px 20px; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); background: #fafbfc; }
+        td { padding: 14px 20px; border-bottom: 1px solid var(--border); color: var(--text); }
+        tr:last-child td { border-bottom: none; } tr:hover td { background: #fafbfc; }
+        .badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 6px; font-size: 0.6875rem; font-weight: 500; }
+        .badge-green { background: var(--green-light); color: var(--green-dark); }
+        .badge-red { background: var(--red-light); color: var(--red); }
+        .badge-amber { background: var(--amber-light); color: #b45309; }
+        .badge-blue { background: var(--blue-light); color: var(--blue); }
+        .text-green { color: var(--green); } .text-red { color: var(--red); } .text-amber { color: var(--amber); }
+        .form-group { margin-bottom: 18px; }
+        .form-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+        .form-input, .form-select { width: 100%; padding: 10px 14px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.875rem; font-family: var(--font); outline: none; transition: all 0.15s ease; }
+        .form-input:focus, .form-select:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
+        .form-input::placeholder { color: var(--text-muted); }
+        .search-box { position: relative; margin-bottom: 20px; max-width: 320px; }
+        .search-box input { width: 100%; padding: 10px 14px 10px 38px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.875rem; font-family: var(--font); outline: none; transition: all 0.15s ease; }
+        .search-box input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-light); }
+        .search-box svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--text-muted); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+        .modal { background: var(--card); border-radius: var(--radius-lg); padding: 28px; width: 100%; max-width: 420px; box-shadow: var(--shadow-lg); }
+        .modal h3 { font-size: 1.0625rem; font-weight: 600; margin-bottom: 20px; color: var(--text); }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+        .alert { padding: 12px 16px; border-radius: var(--radius); font-size: 0.8125rem; margin-bottom: 20px; }
+        .alert-success { background: var(--green-light); color: var(--green-dark); border: 1px solid #bbf7d0; }
+        .alert-error { background: var(--red-light); color: var(--red); border: 1px solid #fecaca; }
+        .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); }
+        .pos-layout { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); }
+        .pos-products { overflow-y: auto; padding-right: 8px; }
+        .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+        .product-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: all 0.15s ease; text-align: center; }
+        .product-card:hover { border-color: var(--green); box-shadow: var(--shadow); transform: translateY(-1px); }
+        .product-card.out-of-stock { opacity: 0.4; pointer-events: none; }
+        .product-card-name { font-size: 0.85rem; font-weight: 500; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .product-card-price { font-size: 0.8rem; color: var(--green-dark); font-weight: 600; }
+        .product-card-stock { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; }
+        .pos-cart { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; }
+        .cart-header { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .cart-header h3 { font-size: 0.9rem; font-weight: 600; }
+        .cart-items { flex: 1; overflow-y: auto; padding: 12px 18px; }
+        .cart-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .cart-item:last-child { border-bottom: none; }
         .cart-item-info { flex: 1; }
-        .cart-item-name { font-size: 0.85rem; font-weight: 500; }
-        .cart-item-price { font-size: 0.75rem; color: var(--text-muted); }
-
-        .cart-item-qty {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .qty-btn {
-            width: 26px;
-            height: 26px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            background: var(--bg);
-            color: var(--text);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.85rem;
-        }
-
-        .qty-btn:hover { border-color: var(--accent-dim); }
-
-        .cart-footer {
-            padding: 16px;
-            border-top: 1px solid var(--border);
-        }
-
-        .cart-total {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-
-        .cart-total-label { font-size: 0.85rem; color: var(--text-muted); }
-        .cart-total-value { font-size: 1.25rem; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-
-        /* Login page */
-        .login-page {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--bg);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .login-page::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(ellipse at 30% 50%, var(--accent-glow) 0%, transparent 50%);
-            animation: pulse 8s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(1.05); }
-        }
-
-        .login-card {
-            position: relative;
-            width: 100%;
-            max-width: 380px;
-            padding: 40px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            margin: 20px;
-        }
-
-        .login-logo {
-            text-align: center;
-            margin-bottom: 32px;
-        }
-
-        .login-logo h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            letter-spacing: -0.03em;
-        }
-
-        .login-logo p {
-            font-size: 0.8rem;
-            color: var(--text-dim);
-            margin-top: 4px;
-        }
-
-        .login-btn {
-            width: 100%;
-            padding: 11px;
-            background: var(--accent-dim);
-            color: var(--accent);
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            font-family: var(--font);
-            cursor: pointer;
-            transition: all 0.15s ease;
-            margin-top: 8px;
-        }
-
-        .login-btn:hover {
-            background: var(--accent);
-            color: var(--bg);
-        }
-
-        /* Alerts */
-        .alert {
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            margin-bottom: 16px;
-        }
-
-        .alert-error {
-            background: var(--red-dim);
-            color: var(--red);
-            border: 1px solid rgba(248, 113, 113, 0.2);
-        }
-
-        .alert-success {
-            background: var(--green-dim);
-            color: var(--green);
-            border: 1px solid rgba(52, 211, 153, 0.2);
-        }
-
-        /* Ghost mode */
-        .anomaly-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 16px;
-            margin-bottom: 12px;
-        }
-
+        .cart-item-name { font-size: 0.82rem; font-weight: 500; }
+        .cart-item-price { font-size: 0.72rem; color: var(--text-muted); }
+        .cart-item-qty { display: flex; align-items: center; gap: 6px; }
+        .qty-btn { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border); background: var(--white); color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; }
+        .qty-btn:hover { border-color: var(--green); }
+        .qty-val { font-size: 0.82rem; font-weight: 500; min-width: 20px; text-align: center; }
+        .cart-footer { padding: 16px 18px; border-top: 1px solid var(--border); }
+        .cart-total { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .cart-total-label { font-size: 0.82rem; color: var(--text-secondary); }
+        .cart-total-value { font-size: 1.2rem; font-weight: 700; }
+        .payment-methods { display: flex; gap: 8px; margin-bottom: 12px; }
+        .payment-btn { flex: 1; padding: 8px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--white); color: var(--text-secondary); font-size: 0.78rem; font-weight: 500; font-family: var(--font); cursor: pointer; text-align: center; transition: all 0.15s ease; }
+        .payment-btn:hover { border-color: var(--green); }
+        .payment-btn.selected { background: var(--green-light); border-color: var(--green); color: var(--green-dark); }
+        .checkout-btn { width: 100%; padding: 12px; background: var(--green); color: white; border: none; border-radius: var(--radius); font-size: 0.85rem; font-weight: 600; font-family: var(--font); cursor: pointer; transition: all 0.15s ease; }
+        .checkout-btn:hover { background: var(--green-dark); }
+        .checkout-btn:disabled { opacity: 0.4; pointer-events: none; }
+        .empty-cart { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 0.8rem; }
+        .anomaly-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
         .anomaly-card.critical { border-left: 3px solid var(--red); }
         .anomaly-card.high { border-left: 3px solid var(--amber); }
-        .anomaly-card.medium { border-left: 3px solid var(--accent); }
+        .anomaly-card.medium { border-left: 3px solid var(--blue); }
         .anomaly-card.low { border-left: 3px solid var(--green); }
-
-        /* Search */
-        .search-box {
-            position: relative;
-            margin-bottom: 16px;
-        }
-
-        .search-box input {
-            width: 100%;
-            padding: 9px 12px 9px 36px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            font-size: 0.85rem;
-            font-family: var(--font);
-            outline: none;
-        }
-
-        .search-box input:focus {
-            border-color: var(--accent-dim);
-            box-shadow: 0 0 0 3px var(--accent-glow);
-        }
-
-        .search-box svg {
-            position: absolute;
-            left: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 16px;
-            height: 16px;
-            color: var(--text-dim);
-        }
-
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 48px 20px;
-            color: var(--text-dim);
-        }
-
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 16px;
-            opacity: 0.3;
-        }
-
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; }
-            .sidebar.open { transform: translateX(0); }
-            .main { margin-left: 0; }
+        
+        /* Bulk Actions Bar */
+        .bulk-bar { display: none; background: var(--text); color: white; padding: 12px 20px; border-radius: var(--radius); margin-bottom: 16px; align-items: center; gap: 12px; font-size: 0.85rem; }
+        .bulk-bar.visible { display: flex; }
+        .bulk-bar button { padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: white; font-size: 0.8rem; cursor: pointer; font-family: var(--font); }
+        .bulk-bar button:hover { background: rgba(255,255,255,0.1); }
+        .bulk-bar .bulk-count { font-weight: 600; }
+        
+        /* Mobile */
+        @media (max-width: 1024px) { 
+            .grid-2, .grid-3 { grid-template-columns: 1fr; } 
             .pos-layout { grid-template-columns: 1fr; }
-            .grid-2, .grid-3 { grid-template-columns: 1fr; }
+            .quick-nav { display: none; }
         }
-
-        /* HTMX indicators */
-        .htmx-indicator { display: none; }
-        .htmx-request .htmx-indicator { display: inline; }
-        .htmx-request.htmx-indicator { display: inline; }
-
-        /* Animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .fade-in { animation: fadeIn 0.2s ease; }
-
-        /* Mono for numbers */
-        .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
     </style>
 </head>
 <body>
-    {{block "body" .}}{{end}}
+    <div class="app">
+        <!-- Sidebar Overlay -->
+        <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+        
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-brand-icon" style="width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;">
+                    <img src="/static/logo.svg" alt="Logo" style="width:32px;height:32px;object-fit:contain;">
+                </div>
+                <h1>Mini-Database</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-section" data-i18n="nav.main">Main</div>
+                <a href="/dashboard" class="nav-link {{if eq .Page "dashboard"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                    <span data-i18n="nav.dashboard">Dashboard</span>
+                </a>
+                <a href="/pos" class="nav-link {{if eq .Page "pos"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <span data-i18n="nav.pos">Point of Sale</span>
+                </a>
+                <a href="/inventory" class="nav-link {{if eq .Page "inventory"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    <span data-i18n="nav.inventory">Inventory</span>
+                </a>
+                <div class="nav-section" data-i18n="nav.operations">Operations</div>
+                <a href="/sessions" class="nav-link {{if eq .Page "sessions"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span data-i18n="nav.sessions">Sessions</span>
+                </a>
+                <a href="/workers" class="nav-link {{if eq .Page "workers"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                    <span data-i18n="nav.workers">Workers</span>
+                </a>
+                <a href="/admin/users" class="nav-link {{if eq .Page "users"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                    <span data-i18n="nav.users">User Management</span>
+                </a>
+                <div class="nav-section" data-i18n="nav.insights">Insights</div>
+                <a href="/reports" class="nav-link {{if eq .Page "reports"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    <span data-i18n="nav.reports">Reports</span>
+                </a>
+                <a href="/forecast" class="nav-link {{if eq .Page "forecast"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                    <span data-i18n="nav.forecast">Forecast</span>
+                </a>
+                <div class="nav-section" data-i18n="nav.system">System</div>
+                <a href="/settings" class="nav-link {{if eq .Page "settings"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                    <span data-i18n="nav.settings">Settings</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar">{{.UserInitials}}</div>
+                    <div class="user-details">
+                        <div class="user-name">{{.UserName}}</div>
+                        <div class="user-role">{{.UserRole}}</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main" id="mainContent">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="logo-btn" onclick="toggleSidebar()" title="Toggle Navigation">
+                        <img src="/static/logo.svg" alt="Logo" style="width:24px;height:24px;object-fit:contain;">
+                    </button>
+                    <h2 class="topbar-title">{{.Title}}</h2>
+                </div>
+                <div class="topbar-right">
+                    <nav class="quick-nav">
+                        <a href="/pos" class="quick-btn {{if eq .Page "pos"}}primary{{end}}" title="New Sale">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                            <span data-i18n="quick.pos">POS</span>
+                        </a>
+                        <a href="/inventory" class="quick-btn {{if eq .Page "inventory"}}primary{{end}}" title="Inventory">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                            <span data-i18n="quick.stock">Stock</span>
+                        </a>
+                        <a href="/sessions" class="quick-btn {{if eq .Page "sessions"}}primary{{end}}" title="Sessions">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <span data-i18n="quick.shifts">Shifts</span>
+                        </a>
+                        <a href="/reports" class="quick-btn {{if eq .Page "reports"}}primary{{end}}" title="Reports">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                            <span data-i18n="quick.reports">Reports</span>
+                        </a>
+                        <a href="/forecast" class="quick-btn {{if eq .Page "forecast"}}primary{{end}}" title="Forecast">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                            <span data-i18n="quick.forecast">Forecast</span>
+                        </a>
+                        <!-- Language Switcher -->
+                        <select id="langSwitcher" onchange="setLanguage(this.value)" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;font-size:0.75rem;font-family:var(--font);background:var(--white);color:var(--text-secondary);cursor:pointer;outline:none" title="Change language">
+                            <option value="en">🇬🇧 English</option>
+                            <option value="sw">🇰🇪 Kiswahili</option>
+                        </select>
+                    </nav>
+                    {{block "topbar-actions" .}}{{end}}
+                </div>
+            </header>
+            
+            <div class="content">
+                {{block "content" .}}{{end}}
+            </div>
+        </main>
+    </div>
+    
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" style="position:fixed;top:24px;right:24px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none"></div>
+    
+    <!-- Help Button -->
+    <button id="helpBtn" onclick="startTour()" style="position:fixed;bottom:24px;left:24px;z-index:9998;width:48px;height:48px;border-radius:50%;background:var(--green);color:white;border:none;cursor:pointer;box-shadow:0 4px 12px rgba(130,180,64,0.4);display:flex;align-items:center;justify-content:center;transition:all 0.2s" data-i18n-title="help.title" title="Take a tour">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </button>
+    
+    <!-- Tour Overlay -->
+    <div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;cursor:pointer" onclick="closeTour()"></div>
+    <div id="tourCard" style="display:none;position:fixed;z-index:10002;background:var(--white);border-radius:16px;padding:28px;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:tourPop 0.3s ease-out">
+        <div id="tourContent"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px">
+            <span id="tourCounter" style="font-size:0.75rem;color:var(--text-muted)"></span>
+            <div style="display:flex;gap:8px">
+                <button onclick="closeTour()" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--white);color:var(--text-secondary);font-size:0.8rem;cursor:pointer;font-family:var(--font)" data-i18n="tour.skip">Skip</button>
+                <button id="tourNext" onclick="nextTourStep()" style="padding:8px 20px;border:none;border-radius:8px;background:var(--green);color:white;font-size:0.8rem;font-weight:600;cursor:pointer;font-family:var(--font)" data-i18n="tour.next">Next →</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Online/Offline Status Indicator -->
+    <div id="offlinePopup" style="display:none;position:fixed;bottom:24px;right:24px;background:#1a1a2e;color:#fff;border-left:4px solid #f59e0b;border-radius:10px;padding:16px 20px 16px 16px;font-size:0.85rem;font-family:var(--font);z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.2);max-width:340px;animation:slideInRight 0.3s ease-out">
+        <button onclick="dismissOfflinePopup()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:#9ca3af;cursor:pointer;padding:4px;font-size:1.1rem;line-height:1" title="Dismiss">✕</button>
+        <div style="display:flex;align-items:center;gap:10px">
+            <div style="flex-shrink:0;width:36px;height:36px;background:#f59e0b20;border-radius:8px;display:flex;align-items:center;justify-content:center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M18.36 19.61A9 9 0 0 0 5.64 5.64"/><path d="M15.54 16.78A5 5 0 0 0 8.46 8.46"/><path d="M12 12l.01.01"/><path d="M2 2l20 20"/></svg>
+            </div>
+            <div>
+                <div style="font-weight:600;margin-bottom:2px" data-i18n="offline.title">Offline Mode</div>
+                <div style="color:#d1d5db;font-size:0.75rem;line-height:1.4" data-i18n="offline.body">Sales saved locally, will sync when back online</div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOutRight { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+        @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes toastOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+        @keyframes tourPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .tour-highlight { position: relative; z-index: 10003; box-shadow: 0 0 0 4px var(--green), 0 0 0 9999px rgba(0,0,0,0.5); border-radius: 8px; }
+    </style>
+    
+    <script>
+        // ========== Toast Notifications ==========
+        function showToast(message, type, duration) {
+            type = type || 'success';
+            duration = duration || 3500;
+            var container = document.getElementById('toastContainer');
+            var toast = document.createElement('div');
+            var colors = { success: '#82b440', error: '#ef4444', info: '#3b82f6', warning: '#f59e0b' };
+            var icons = {
+                success: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>',
+                error: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+                info: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+                warning: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+            };
+            toast.style.cssText = 'pointer-events:auto;background:var(--white);border:1px solid var(--border);border-left:4px solid ' + colors[type] + ';border-radius:10px;padding:14px 18px 14px 14px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 24px rgba(0,0,0,0.12);animation:toastIn 0.3s ease-out;max-width:360px;font-size:0.85rem;font-family:var(--font);color:var(--text)';
+            toast.innerHTML = '<div style="flex-shrink:0;color:' + colors[type] + '">' + icons[type] + '</div><div style="flex:1;min-width:0">' + message + '</div><button onclick="this.parentElement.remove()" style="flex-shrink:0;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px">✕</button>';
+            container.appendChild(toast);
+            setTimeout(function() { toast.style.animation = 'toastOut 0.3s ease-out forwards'; setTimeout(function() { toast.remove(); }, 300); }, duration);
+        }
+        
+        // ========== Page-Aware Interactive Tour ==========
+        var currentPage = '{{.Page}}';
+        var tourSteps = [];
+        var tourIndex = 0;
+        
+        var tourData = {
+            en: {
+                dashboard: [
+                    { title: 'Welcome! 👋', body: "Let's walk through your new POS system. It takes 30 seconds.", target: null },
+                    { title: 'Dashboard Stats', body: "Your command center. See today's sales, cash vs M-Pesa, low stock alerts, and fraud risk score at a glance. Hover over each card for details.", target: '.stat-card' },
+                    { title: 'Quick Actions', body: 'Jump to any section instantly. These buttons highlight your current page.', target: '.quick-nav' },
+                    { title: 'Sales Trend', body: '30-day revenue and transaction chart. Auto-refreshes every 30 seconds.', target: null },
+                    { title: 'Ghost Mode', body: 'Fraud detection panel. Shows anomalies like unusual variances or suspicious patterns.', target: null },
+                    { title: "You're all set! 🎉", body: 'Click the ? button anytime to revisit this tour. Happy selling!', target: '#helpBtn' }
+                ],
+                pos: [
+                    { title: 'Point of Sale 💰', body: 'This is where you record sales. Tap products to add them to the cart.', target: null },
+                    { title: 'Search & Scan', body: 'Type to search products by name or SKU. Barcode scanners work too — just scan and it auto-adds!', target: '#productSearch' },
+                    { title: 'Products Grid', body: 'Tap any product to add to cart. Green border = in stock, faded = out of stock.', target: '#productGrid' },
+                    { title: 'Shopping Cart', body: 'Review items, adjust quantities with +/−, and see the running total.', target: '.pos-cart' },
+                    { title: 'Payment Methods', body: 'Choose Cash or M-Pesa. M-Pesa sends an STK push to the customer phone.', target: null },
+                    { title: 'Complete Sale', body: 'Click to finalize. Receipt generates automatically. Cart saves if browser crashes!', target: '#checkoutBtn' }
+                ],
+                inventory: [
+                    { title: 'Inventory Management 📦', body: 'View and manage all your products. Search, filter, and bulk update prices.', target: null },
+                    { title: 'Product Table', body: 'See product name, SKU, cost price, sell price, stock level, and status at a glance.', target: '#productTable' },
+                    { title: 'Bulk Price Update', body: 'Select multiple products and update prices by percentage or fixed amount. Saves hours during inflation!', target: null },
+                    { title: 'Add Product', body: 'Click to add a new product with name, SKU, prices, and initial stock.', target: null }
+                ],
+                sessions: [
+                    { title: 'Worker Sessions ⏰', body: 'Track worker shifts. Open a session when a worker starts, close when they end.', target: null },
+                    { title: 'Active Sessions', body: 'Currently open shifts. Shows worker name, start time, and opening float.', target: null },
+                    { title: 'Closed Sessions', body: 'History of completed shifts with closing cash and M-Pesa totals.', target: null },
+                    { title: 'Open New Session', body: 'Select a worker and set the opening float amount to start their shift.', target: null }
+                ],
+                workers: [
+                    { title: 'Worker Management 👥', body: 'Manage your shop workers and their access.', target: null },
+                    { title: 'Worker List', body: 'See each worker name, PIN status, and whether they are active.', target: null },
+                    { title: 'Add Worker', body: 'Add a new worker with an optional 4-digit PIN for quick login.', target: null }
+                ],
+                reports: [
+                    { title: 'Reports & Analytics 📊', body: 'View daily summaries, worker performance, and full transaction ledger.', target: null },
+                    { title: 'Daily Summary', body: "Today's total sales, cash vs M-Pesa breakdown, and transaction count.", target: null },
+                    { title: 'Worker Stats', body: 'See how much each worker has sold today. Great for performance tracking.', target: null },
+                    { title: 'Recent Transactions', body: 'Full list of today sales with time, product, quantity, and payment method.', target: null },
+                    { title: 'Export Data', body: 'Download sales, inventory, or worker data as CSV for your records.', target: null }
+                ],
+                forecast: [
+                    { title: 'Forecast & Predictions 🔮', body: 'Smart inventory predictions and demand trends to help you stock better.', target: null },
+                    { title: 'Revenue Forecast', body: 'Next 7-day prediction based on your growth rate and historical data.', target: null },
+                    { title: 'Stock Health', body: 'See which products are running low and when they will run out.', target: null },
+                    { title: 'Demand Trends', body: 'Products that are rising or falling in demand. Helps you order smarter.', target: null }
+                ],
+                settings: [
+                    { title: 'Settings ⚙️', body: 'Configure your shop, M-Pesa integration, and email reports.', target: null },
+                    { title: 'Shop Settings', body: 'Update shop name, currency, tax rate, address, and phone number.', target: null },
+                    { title: 'M-Pesa Settings', body: 'Enter your Daraja API credentials to enable mobile payments.', target: null },
+                    { title: 'Email Settings', body: 'Configure SMTP for automated daily report emails.', target: null }
+                ]
+            },
+            sw: {
+                dashboard: [
+                    { title: 'Karibu! 👋', body: 'Tukuonyeshe mfumo wako mpya. Inachukua sekunde 30 tu.', target: null },
+                    { title: 'Takwimu za Dashibodi', body: 'Kituo chako cha udhibiti. Ona mauzo ya leo, pesa dhidi ya M-Pesa, arifa za hifadhi chini, na alama ya hatari ya udanganyifu kwa mtazamo mmoja. Bonyeza kadi yoyote kwa maelezo.', target: '.stat-card' },
+                    { title: 'Vitendo vya Haraka', body: 'Ruka kwa sehemu yoyote mara moja. Vitufe hivi vinaonyesha ukurasa wako wa sasa.', target: '.quick-nav' },
+                    { title: 'Mwelekeo wa Mauzo', body: 'Chati ya mapato na miamala ya siku 30. Inasasisha kila sekunde 30.', target: null },
+                    { title: 'Ghost Mode', body: 'Ugunduzi wa udanganyifu. Unaonyesha tofauti zisizo za kawaida au mifumo ya shaka.', target: null },
+                    { title: 'Umekamilika! 🎉', body: 'Bonyeza kitufe hiki ? wakati wowote kurudia ziara hii. Mauzo mazuri!', target: '#helpBtn' }
+                ],
+                pos: [
+                    { title: 'Nunua Bidhaa 💰', body: 'Hapa unarekodi mauzo. Bonyeza bidhaa kuongeza kwenye kikapu.', target: null },
+                    { title: 'Tafuta na Soma', body: 'Andika kutafuta bidhaa kwa jina au SKU. Visomaji barcode vinafanya kazi pia — soma tu na inaongeza!', target: '#productSearch' },
+                    { title: 'Gridi ya Bidhaa', body: 'Bonyeza bidhaa yoyote kuongeza kwenye kikapu. Mipaka ya kijani = ipo, hafifu = imeisha.', target: '#productGrid' },
+                    { title: 'Kikapu', body: 'Kagua vitu, rekebisha wingi na +/−, na ona jumla inayoendelea.', target: '.pos-cart' },
+                    { title: 'Njia za Malipo', body: 'Chagua Pesa Taslimu au M-Pesa. M-Pesa inatuma STK push kwa simu ya mteja.', target: null },
+                    { title: 'Kamilisha Mauzo', body: 'Bonyeza kumaliza. Ripoti inatengenezwa moja kwa moja. Kikapu kinahifadhiwa ikiwa kivinjari kinaanguka!', target: '#checkoutBtn' }
+                ],
+                inventory: [
+                    { title: 'Usimamizi wa Hifadhi 📦', body: 'Tazama na usimamie bidhaa zako zote. Tafuta, chuja, na sasisha bei kwa wingi.', target: null },
+                    { title: 'Jedwali la Bidhaa', body: 'Ona jina la bidhaa, SKU, bei ya gharama, bei ya kuuza, kiwango cha hifadhi, na hali kwa mtazamo mmoja.', target: '#productTable' },
+                    { title: 'Sasisha Bei kwa Wingi', body: 'Chagua bidhaa nyingi na usasishe bei kwa asilimia au kiasi cha kudumu. Inaokoa saa wakati wa mfumuko wa bei!', target: null },
+                    { title: 'Ongeza Bidhaa', body: 'Bonyeza kuongeza bidhaa mpya kwa jina, SKU, bei, na hifadhi ya awali.', target: null }
+                ],
+                sessions: [
+                    { title: 'Mipango ya Wafanyakazi ⏰', body: 'Fuatilia mabadiliko ya wafanyakazi. Fungua mpango mfanyakazi anapoanza, fungua anapomaliza.', target: null },
+                    { title: 'Mipango Inayoendelea', body: 'Mabadiliko yaliyofunguliwa sasa. Unaonyesha jina la mfanyakazi, wakati wa kuanza, na pesa ya kuanzia.', target: null },
+                    { title: 'Mipango Iliyofungwa', body: 'Historia ya mabadiliko yaliyokamilika kwa jumla ya pesa na M-Pesa ya kufunga.', target: null },
+                    { title: 'Fungua Mpango Mpya', body: 'Chagua mfanyakazi na weka kiasi cha pesa ya kuanzia kuanza mabadiliko yao.', target: null }
+                ],
+                workers: [
+                    { title: 'Usimamizi wa Wafanyakazi 👥', body: 'Simamia wafanyakazi wa dukako na upatikanaji wao.', target: null },
+                    { title: 'Orodha ya Wafanyakazi', body: 'Ona jina la kila mfanyakazi, hali ya PIN, na kama wako hai.', target: null },
+                    { title: 'Ongeza Mfanyakazi', body: 'Ongeza mfanyakazi mpya kwa PIN ya tarakimu 4 hiari kwa kuingia kwa haraka.', target: null }
+                ],
+                reports: [
+                    { title: 'Ripoti na Uchambuzi 📊', body: 'Tazama muhtasari wa kila siku, utendaji wa wafanyakazi, na ledger kamili ya miamala.', target: null },
+                    { title: 'Muhtasari wa Kila Siku', body: "Jumla ya mauzo ya leo, mgawanyiko wa pesa dhidi ya M-Pesa, na idadi ya miamala.", target: null },
+                    { title: 'Takwimu za Wafanyakazi', body: 'Ona kila mfanyakazi ameuza leo. Nzuri kwa ufuatiliaji wa utendaji.', target: null },
+                    { title: 'Miamala ya Hivi Karibuni', body: 'Orodha kamili ya mauzo ya leo kwa wakati, bidhaa, wingi, na njia ya malipo.', target: null },
+                    { title: 'Usafirisha Data', body: 'Pakua data ya mauzo, hifadhi, au wafanyakazi kama CSV kwa rekodi zako.', target: null }
+                ],
+                forecast: [
+                    { title: 'Utabiri na Makadirio 🔮', body: 'Makadirio ya hifadhi yenye akili na mwelekeo wa mahitaji kukusaidia kuhifadhi vizuri.', target: null },
+                    { title: 'Utabiri wa Mapato', body: 'Utabiri wa siku 7 zinazofuata kulingana na kiwango chako cha ukuaji na data ya kihistoria.', target: null },
+                    { title: 'Afya ya Hifadhi', body: 'Ona bidhaa zinazokwisha na zitakapokwisha.', target: null },
+                    { title: 'Mwelekeo wa Mahitaji', body: 'Bidhaa zinazopanda au kushuka kwa mahitaji. Inakusaidia kuagiza kwa akili.', target: null }
+                ],
+                settings: [
+                    { title: 'Mipangilio ⚙️', body: 'Sanidi duka lako, muunganisho wa M-Pesa, na ripoti za barua pepe.', target: null },
+                    { title: 'Mipangilio ya Duka', body: 'Sasisha jina la duka, sarafu, kiwango cha kodi, anwani, na nambari ya simu.', target: null },
+                    { title: 'Mipangilio ya M-Pesa', body: 'Ingia vitambulisho vyako vya Daraja API kuwezesha malipo ya simu.', target: null },
+                    { title: 'Mipangilio ya Barua Pepe', body: 'Sanidi SMTP kwa ripoti za kila siku za barua pepe.', target: null }
+                ]
+            }
+        };
+
+        function getTourSteps() {
+            var lang = localStorage.getItem('lang') || 'en';
+            var pageSteps = tourData[lang][currentPage];
+            if (!pageSteps) {
+                // Fallback for pages without specific tour
+                return [
+                    { title: lang === 'sw' ? 'Karibu! 👋' : 'Welcome! 👋', body: lang === 'sw' ? 'Uko kwenye ukurasa huu. Tumia upande wa kushoto kusogeza.' : "You're on this page. Use the sidebar to navigate.", target: null },
+                    { title: lang === 'sw' ? 'Umekamilika! 🎉' : "You're all set! 🎉", body: lang === 'sw' ? 'Bonyeza kitufe hiki ? wakati wowote kurudia ziara hii.' : 'Click the ? button anytime to revisit this tour.', target: '#helpBtn' }
+                ];
+            }
+            return pageSteps;
+        }
+
+        function startTour() {
+            tourIndex = 0;
+            tourSteps = getTourSteps();
+            document.getElementById('tourOverlay').style.display = 'block';
+            document.getElementById('tourCard').style.display = 'block';
+            localStorage.setItem('tourSeen_' + currentPage, 'true');
+            showTourStep();
+        }
+        function closeTour() {
+            document.getElementById('tourOverlay').style.display = 'none';
+            document.getElementById('tourCard').style.display = 'none';
+            document.querySelectorAll('.tour-highlight').forEach(function(el) { el.classList.remove('tour-highlight'); });
+        }
+        function showTourStep() {
+            document.querySelectorAll('.tour-highlight').forEach(function(el) { el.classList.remove('tour-highlight'); });
+            var step = tourSteps[tourIndex];
+            document.getElementById('tourContent').innerHTML = '<div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">' + step.title + '</div><div style="font-size:0.875rem;color:var(--text-secondary);line-height:1.6">' + step.body + '</div>';
+            document.getElementById('tourCounter').textContent = (tourIndex + 1) + ' of ' + tourSteps.length;
+            var lang = localStorage.getItem('lang') || 'en';
+            var isLast = tourIndex === tourSteps.length - 1;
+            document.getElementById('tourNext').textContent = isLast ? (lang === 'sw' ? 'Imekamilika ✓' : 'Done ✓') : (lang === 'sw' ? 'Inayofuata →' : 'Next →');
+            var card = document.getElementById('tourCard');
+            if (step.target) {
+                var el = document.querySelector(step.target);
+                if (el) { el.classList.add('tour-highlight'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); var rect = el.getBoundingClientRect(); var cardW = 380, cardH = 200; var top = rect.bottom + 16, left = rect.left; if (top + cardH > window.innerHeight) top = rect.top - cardH - 16; if (left + cardW > window.innerWidth) left = window.innerWidth - cardW - 24; if (left < 24) left = 24; card.style.top = top + 'px'; card.style.left = left + 'px'; card.style.transform = 'none'; }
+            } else {
+                card.style.top = '50%'; card.style.left = '50%'; card.style.transform = 'translate(-50%, -50%)';
+            }
+        }
+        function nextTourStep() {
+            tourIndex++;
+            if (tourIndex >= tourSteps.length) { closeTour(); return; }
+            showTourStep();
+        }
+        
+        // Show tour on first visit to any page
+        if (!localStorage.getItem('tourSeen_' + currentPage)) {
+            setTimeout(startTour, 1000);
+        }
+        
+        // ========== Keyboard Shortcuts ==========
+        document.addEventListener('keydown', function(e) {
+            if (e.key === '?' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                startTour();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                var search = document.querySelector('.search-box input, #productSearch');
+                if (search) search.focus();
+            }
+        });
+        
+        // ========== Sidebar ==========
+        function toggleSidebar() {
+            var sidebar = document.getElementById('sidebar');
+            var main = document.getElementById('mainContent');
+            var overlay = document.getElementById('sidebarOverlay');
+            sidebar.classList.toggle('open');
+            main.classList.toggle('sidebar-open');
+            overlay.classList.toggle('visible');
+        }
+        document.querySelectorAll('.nav-link').forEach(function(link) {
+            link.addEventListener('click', function() {
+                if (window.innerWidth <= 1024) toggleSidebar();
+            });
+        });
+        
+        // ========== Kiswahili Translations ==========
+        var translations = {
+            sw: {
+                // Sidebar
+                'nav.dashboard': 'Dashibodi',
+                'nav.pos': 'Nunua Bidhaa',
+                'nav.inventory': 'Hifadhi',
+                'nav.sessions': 'Mipango',
+                'nav.workers': 'Wafanyakazi',
+                'nav.users': 'Watumiaji',
+                'nav.reports': 'Ripoti',
+                'nav.forecast': 'Utabiri',
+                'nav.settings': 'Mipangilio',
+                'nav.main': 'Kuu',
+                'nav.operations': 'Shughuli',
+                'nav.insights': 'Uchambuzi',
+                'nav.system': 'Mfumo',
+                // Quick nav
+                'quick.pos': 'Nunua',
+                'quick.stock': 'Hifadhi',
+                'quick.shifts': 'Mipango',
+                'quick.reports': 'Ripoti',
+                'quick.forecast': 'Utabiri',
+                // Tour
+                'tour.welcome.title': 'Karibu! 👋',
+                'tour.welcome.body': 'Tukuonyeshe mfumo wako mpya. Inachukua sekunde 30 tu.',
+                'tour.dashboard.title': 'Dashibodi',
+                'tour.dashboard.body': 'Kituo chako cha udhibiti. Ona mauzo ya leo, pesa dhidi ya M-Pesa, arifa za hifadhi chini, na alama ya hatari ya udanganyifu kwa mtazamo mmoja.',
+                'tour.quick.title': 'Vitendo vya Haraka',
+                'tour.quick.body': 'Ruka kwa sehemu yoyote mara moja. Vitufe hivi vinaonyesha ukurasa wako wa sasa.',
+                'tour.pos.title': 'Nunua Bidhaa',
+                'tour.pos.body': 'Bonyeza bidhaa kuongeza kwenye kikapu, chagua njia ya malipo, na kamilisha mauzo. Inasaidia visomaji barcode pia! Bonyeza / kutafuta bidhaa.',
+                'tour.inventory.title': 'Hifadhi',
+                'tour.inventory.body': 'Simamia bidhaa zako, fuatilia viwango vya hifadhi, na weka arifa za hifadhi chini. Tumia vitendo vingi kusasisha bei kwa bidhaa nyingi kwa wakati mmoja.',
+                'tour.reports.title': 'Ripoti',
+                'tour.reports.body': 'Tazama muhtasari wa kila siku, utendaji wa wafanyakazi, na usafirisha kila kitu hadi CSV.',
+                'tour.shortcuts.title': 'Njia za Kibodi',
+                'tour.shortcuts.body': 'Bonyeza ? wakati wowote kuona ziara hii tena. Tumia Ctrl+K kuruka kwa utafutaji. Kwenye ukurasa wa POS, anza tu kuandika au kusoma barcode kutafuta bidhaa.',
+                'tour.done.title': 'Umekamilika! 🎉',
+                'tour.done.body': 'Bonyeza kitufe hiki ? wakati wowote kurudia ziara hii. Mauzo mazuri!',
+                'tour.next': 'Inayofuata →',
+                'tour.done': 'Imekamilika ✓',
+                'tour.skip': 'Ruka',
+                // Offline
+                'offline.title': 'Mtandao Umeacha',
+                'offline.body': 'Mauzo yamehifadhiwa ndani, yatasawazishwa ukirudi mtandaoni',
+                // Help
+                'help.title': 'Chukua ziara',
+                // Toast defaults
+                'toast.success': 'Imekamilika!',
+                'toast.error': 'Hitilafu imetokea',
+                'toast.warning': 'Tahadhari',
+                'toast.info': 'Taarifa',
+                // POS
+                'pos.scan': 'Soma',
+                'pos.search': 'Tafuta bidhaa au soma barcode...',
+                'pos.instock': 'hifadhi',
+                'pos.cart': 'Kikapu',
+                'pos.clear': 'Futa',
+                'pos.empty': 'Bonyeza bidhaa kuongeza kwenye kikapu',
+                'pos.total': 'Jumla',
+                'pos.cash': '💵 Pesa Taslimu',
+                'pos.mpesa': '📱 M-Pesa',
+                'pos.checkout': 'Kamilisha Mauzo',
+                // Inventory
+                'inv.bulk': '⚡ Sasisha Bei',
+                'inv.add': '+ Ongeza Bidhaa',
+                'inv.search': 'Tafuta bidhaa...',
+                'inv.selected': 'bidhaa zimechaguliwa',
+                'inv.selectAll': 'Chagua Zote',
+                'inv.deselect': 'Ondoa Chaguo',
+                'inv.updatePrices': 'Sasisha Bei',
+                'inv.bulkTitle': 'Sasisha Bei kwa Wingi',
+                'inv.bulkDesc': 'Sasisha bei kwa bidhaa',
+                'inv.bulkType': 'Aina ya Usasishaji',
+                'inv.bulkPercent': 'Asilimia (%)',
+                'inv.bulkFixed': 'Kiasi Cha Kudumu',
+                'inv.bulkDirection': 'Mwelekeo',
+                'inv.increase': 'Ongeza (+)',
+                'inv.decrease': 'Punguza (−)',
+                'inv.bulkValue': 'Thamani',
+                'inv.apply': 'Tumia kwa Zilizochaguliwa',
+                'inv.cancel': 'Ghairi',
+                'inv.addProduct': 'Ongeza Bidhaa',
+                'inv.productName': 'Jina la Bidhaa',
+                'inv.sku': 'SKU (hiari)',
+                'inv.costPrice': 'Bei ya Gharama',
+                'inv.sellPrice': 'Bei ya Kuuza',
+                'inv.initialStock': 'Hifadhi ya Awali',
+                'inv.lowStockAlert': 'Arifa ya Hifadhi Chini',
+                'inv.outOfStock': 'Imeisha',
+                'inv.lowStock': 'Hifadhi Chini',
+                'inv.inStock': 'Ipo',
+                // Dashboard
+                'dash.todaySales': 'Mauzo ya Leo',
+                'dash.cash': 'Pesa Taslimu',
+                'dash.mpesa': 'M-Pesa',
+                'dash.lowStock': 'Arifa za Hifadhi Chini',
+                'dash.activeSessions': 'Mipango Inayoendelea',
+                'dash.riskScore': 'Alama ya Hatari',
+                'dash.transactions': 'miamala',
+                // Login
+                'login.title': 'Ingia — Mini-Database',
+                'login.subtitle': 'Ingia kwenye mfumo wako wa usimamizi wa biashara',
+                'login.email': 'Barua pepe',
+                'login.password': 'Nenosiri',
+                'login.signin': 'Ingia',
+                'login.noAccount': 'Huna akaunti?',
+                'login.createShop': 'Tengeneza duka lako',
+                // Signup
+                'signup.title': 'Anza — Mini-Database',
+                'signup.subtitle': 'Tengeneza akaunti yako ya usimamizi wa biashara',
+                'signup.shopName': 'Jina la Duka',
+                'signup.currency': 'Sarafu',
+                'signup.yourName': 'Jina Lako',
+                'signup.email': 'Barua pepe',
+                'signup.password': 'Nenosiri',
+                'signup.create': 'Tengeneza Duka na Akaunti',
+                'signup.hasAccount': 'Tayari una akaunti?',
+                'signup.signIn': 'Ingia',
+                // Sessions
+                'sess.active': 'Mipango Inayoendelea',
+                'sess.closed': 'Mipango Iliyofungwa',
+                'sess.open': 'Fungua Mpango',
+                'sess.worker': 'Mfanyakazi',
+                'sess.float': 'Pesa ya Kuanzia',
+                // Workers
+                'workers.title': 'Wafanyakazi',
+                'workers.add': '+ Ongeza Mfanyakazi',
+                'workers.name': 'Jina',
+                'workers.pin': 'PIN',
+                'workers.status': 'Hali',
+                'workers.active': 'Inaendelea',
+                'workers.inactive': 'Imesimamishwa',
+                // Reports
+                'reports.title': 'Ripoti',
+                'reports.daily': 'Ripoti ya Kila Siku',
+                'reports.worker': 'Ripoti ya Wafanyakazi',
+                'reports.ledger': 'Ledger',
+                'reports.export': 'Usafirisha CSV',
+                // Settings
+                'settings.title': 'Mipangilio',
+                'settings.shop': 'Mipangilio ya Duka',
+                'settings.mpesa': 'Mipangilio ya M-Pesa',
+                'settings.email': 'Mipangilio ya Barua Pepe',
+                'settings.save': 'Hifadhi Mipangilio',
+                // Bulk modal
+                'bulk.preview': 'Itabadilisha bei kwa',
+                'bulk.applied': 'Bei zimesasishwa kwa bidhaa',
+                // Dashboard
+                'dash.newSale': '+ Mauzo Mapya',
+                'dash.salesTrend': 'Mwelekeo wa Mauzo (Siku 30)',
+                'dash.autoRefresh': 'Inasasisha kila sekunde 30',
+                'dash.paymentMethods': 'Njia za Malipo',
+                'dash.topProducts': 'Bidhaa Bora kwa Mapato',
+                'dash.ghostMode': 'Arifa za Ghost Mode',
+                'dash.recentSales': 'Mauzo ya Hivi Karibuni',
+                'dash.noAnomalies': 'Hakuna tofauti zilizogunduliwa',
+                'dash.noRecentSales': 'Hakuna mauzo ya leo',
+                'dash.product': 'Bidhaa',
+                'dash.qty': 'Wingi',
+                'dash.total': 'Jumla',
+                'dash.worker': 'Mfanyakazi',
+                'dash.time': 'Wakati',
+                // POS
+                'pos.scan': 'Soma',
+                'pos.search': 'Tafuta bidhaa au soma barcode...',
+                'pos.instock': 'hifadhi',
+                'pos.cart': 'Kikapu',
+                'pos.clear': 'Futa',
+                'pos.empty': 'Bonyeza bidhaa kuongeza kwenye kikapu',
+                'pos.total': 'Jumla',
+                'pos.cash': '💵 Pesa Taslimu',
+                'pos.mpesa': '📱 M-Pesa',
+                'pos.checkout': 'Kamilisha Mauzo'
+            }
+        };
+        
+        function setLanguage(lang) {
+            localStorage.setItem('lang', lang);
+            document.getElementById('langSwitcher').value = lang;
+            document.querySelectorAll('[data-i18n]').forEach(function(el) {
+                var key = el.getAttribute('data-i18n');
+                if (translations[lang] && translations[lang][key]) {
+                    el.textContent = translations[lang][key];
+                }
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
+                var key = el.getAttribute('data-i18n-placeholder');
+                if (translations[lang] && translations[lang][key]) {
+                    el.placeholder = translations[lang][key];
+                }
+            });
+            document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+                var key = el.getAttribute('data-i18n-title');
+                if (translations[lang] && translations[lang][key]) {
+                    el.title = translations[lang][key];
+                }
+            });
+            // Update tour steps if in Kiswahili
+            if (lang === 'sw') {
+                tourSteps = [
+                    { title: translations.sw['tour.welcome.title'], body: translations.sw['tour.welcome.body'], target: null },
+                    { title: translations.sw['tour.dashboard.title'], body: translations.sw['tour.dashboard.body'], target: '.stat-card' },
+                    { title: translations.sw['tour.quick.title'], body: translations.sw['tour.quick.body'], target: '.quick-nav' },
+                    { title: translations.sw['tour.pos.title'], body: translations.sw['tour.pos.body'], target: null },
+                    { title: translations.sw['tour.inventory.title'], body: translations.sw['tour.inventory.body'], target: null },
+                    { title: translations.sw['tour.reports.title'], body: translations.sw['tour.reports.body'], target: null },
+                    { title: translations.sw['tour.shortcuts.title'], body: translations.sw['tour.shortcuts.body'], target: null },
+                    { title: translations.sw['tour.done.title'], body: translations.sw['tour.done.body'], target: '#helpBtn' }
+                ];
+            } else {
+                tourSteps = [
+                    { title: 'Welcome! 👋', body: "Let's walk through your new POS system. It takes 30 seconds.", target: null },
+                    { title: 'Dashboard', body: "Your command center. See today's sales, cash vs M-Pesa, low stock alerts, and fraud risk score at a glance.", target: '.stat-card' },
+                    { title: 'Quick Actions', body: 'Jump to any section instantly. These buttons highlight your current page.', target: '.quick-nav' },
+                    { title: 'Point of Sale', body: 'Tap products to add to cart, choose payment method, and complete sales. Supports barcode scanners too! Press / to search products.', target: null },
+                    { title: 'Inventory', body: 'Manage your products, track stock levels, and set low-stock alerts. Use bulk actions to update prices on multiple products at once.', target: null },
+                    { title: 'Reports', body: 'View daily summaries, worker performance, and export everything to CSV.', target: null },
+                    { title: 'Keyboard Shortcuts', body: "Press ? anytime to see this tour again. Use Ctrl+K to jump to search. On the POS page, just start typing or scanning to search products.", target: null },
+                    { title: "You're all set! 🎉", body: 'Click this ? button anytime to revisit this tour. Happy selling!', target: '#helpBtn' }
+                ];
+            }
+        }
+        
+        // Load saved language
+        var savedLang = localStorage.getItem('lang') || 'en';
+        setLanguage(savedLang);
+        
+        // ========== Service Worker ==========
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/static/sw.js').then(function(reg) { console.log('SW registered'); }).catch(function(err) { console.log('SW registration failed:', err); });
+            });
+        }
+        
+        // ========== Online/Offline ==========
+        var popup = document.getElementById('offlinePopup');
+        var popupDismissed = false;
+        function dismissOfflinePopup() {
+            popup.style.animation = 'slideOutRight 0.3s ease-out forwards';
+            popup.addEventListener('animationend', function() { popup.style.display = 'none'; });
+            popupDismissed = true;
+        }
+        function updateOnlineStatus() {
+            if (navigator.onLine) {
+                if (popup.style.display === 'block') { popup.style.animation = 'slideOutRight 0.3s ease-out forwards'; popup.addEventListener('animationend', function() { popup.style.display = 'none'; }); }
+                if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                    navigator.serviceWorker.ready.then(function(reg) { if (reg.sync) reg.sync.register('sync-sales').catch(function() {}); });
+                }
+            } else {
+                if (!popupDismissed) { popup.style.display = 'block'; popup.style.animation = 'slideInRight 0.3s ease-out'; }
+            }
+        }
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        updateOnlineStatus();
+    </script>
 </body>
 </html>
